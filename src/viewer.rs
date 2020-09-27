@@ -54,7 +54,7 @@ impl Viewer {
 
   fn editor_draw_rows(&mut self) {
     for i in 0..self.window_size_row {
-      if i == (self.window_size_col / 3) {
+      if i == (self.window_size_row / 3) {
         let welcom_message = format!("igc editor -- version {}", KILO_VERSION);
         let mut welcom_len = welcom_message.chars().count();
         if welcom_len > self.window_size_col {
