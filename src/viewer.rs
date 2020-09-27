@@ -60,10 +60,20 @@ impl Viewer {
         if welcom_len > self.window_size_col {
           welcom_len = self.window_size_col;
         }
+
+        let mut welcome_line = String::new();
+        let mut padding = (self.window_size_col - welcom_len) / 2;
+        welcome_line.push('~');
+        padding = padding - 1;
+        for _ in 0..padding {
+          welcome_line.push(' ');
+        }
+
         for i in 0..welcom_len {
           let c = welcom_message.chars().nth(i).unwrap();
-          write!(self.stdout, "{}", c);
+          welcome_line.push(c);
         }
+        write!(self.stdout, "{}", welcome_line);
       } else {
         let line = format!("~ ");
         write!(self.stdout, "{}", line);
