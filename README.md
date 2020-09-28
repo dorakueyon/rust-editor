@@ -6,7 +6,7 @@ following step by step editor tutorial written by C, [killo](https://viewsourcec
 
 - [x] Setup
 - [x] Entering raw mode
-- [ ] Raw input and output
+- [x] Raw input and output
 - [ ] A text viewer
 - [ ] A text editor
 - [ ] Search
