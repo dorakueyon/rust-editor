@@ -4,6 +4,8 @@ use termion::input::TermRead;
 use termion::raw::IntoRawMode;
 use termion::*;
 
+use std::fmt::Debug;
+
 use termion::screen::AlternateScreen;
 
 const KILO_VERSION: &str = "1.0";
@@ -14,6 +16,11 @@ pub struct Viewer {
   cursor_y: u16,
   window_size_col: u16,
   window_size_row: u16,
+  editor_lines: Vec<EditorLine>,
+}
+
+struct EditorLine {
+  line: String,
 }
 
 impl Viewer {
@@ -39,7 +46,20 @@ impl Viewer {
       cursor_y,
       window_size_col,
       window_size_row,
+      editor_lines: vec![],
     }
+  }
+
+  fn editor_open(&mut self) {
+    let editor_lines = vec![
+      EditorLine {
+        line: String::from("hello world"),
+      },
+      EditorLine {
+        line: String::from("hey cutie"),
+      },
+    ];
+    self.editor_lines = editor_lines
   }
 
   fn saturated_add_x(&mut self, x: u16) {
@@ -121,32 +141,45 @@ impl Viewer {
     self.stdout.flush().unwrap();
   }
 
+  fn get_welcome_line(&mut self) -> String {
+    let welcom_message = format!("igc editor -- version {}", KILO_VERSION);
+    let mut welcom_len = welcom_message.chars().count() as u16;
+    if welcom_len > self.window_size_col {
+      welcom_len = self.window_size_col;
+    }
+
+    let mut welcome_line = String::new();
+    let mut padding = (self.window_size_col - welcom_len) / 2;
+    welcome_line.push('~');
+    padding = padding - 1;
+    for _ in 0..padding {
+      welcome_line.push(' ');
+    }
+
+    for i in 0..welcom_len {
+      let c = welcom_message.chars().nth(i as usize).unwrap();
+      welcome_line.push(c);
+    }
+
+    welcome_line
+  }
+
   fn editor_draw_rows(&mut self) {
     for i in 0..self.window_size_row {
-      if i == (self.window_size_row / 3) {
-        let welcom_message = format!("igc editor -- version {}", KILO_VERSION);
-        let mut welcom_len = welcom_message.chars().count() as u16;
-        if welcom_len > self.window_size_col {
-          welcom_len = self.window_size_col;
+      eprintln!("{}", self.editor_lines.len());
+      if i >= self.editor_lines.len() as u16 {
+        if i == (self.window_size_row / 3) {
+          let welcome_line = self.get_welcome_line();
+          write!(self.stdout, "{}", welcome_line);
+        } else {
+          let line = format!("~ ");
+          write!(self.stdout, "{}", line);
         }
-
-        let mut welcome_line = String::new();
-        let mut padding = (self.window_size_col - welcom_len) / 2;
-        welcome_line.push('~');
-        padding = padding - 1;
-        for _ in 0..padding {
-          welcome_line.push(' ');
-        }
-
-        for i in 0..welcom_len {
-          let c = welcom_message.chars().nth(i as usize).unwrap();
-          welcome_line.push(c);
-        }
-        write!(self.stdout, "{}", welcome_line);
       } else {
-        let line = format!("~ ");
+        let line = format!("{}", self.editor_lines[i as usize].line);
         write!(self.stdout, "{}", line);
       }
+
       if i < self.window_size_row - 1 {
         write!(self.stdout, "\r\n");
       }
@@ -155,6 +188,8 @@ impl Viewer {
 
   pub fn run_viwer() {
     let mut viewer = Viewer::new();
+
+    viewer.editor_open();
     viewer.editor_refresh_screen();
 
     viewer.editor_process_key_press();
