@@ -77,12 +77,22 @@ impl Viewer {
     fn saturated_add_x(&mut self) {
         if self.cursor_x < self.get_current_row_length() {
             self.cursor_x = self.cursor_x + 1;
+        } else {
+            if self.cursor_y + 1 < self.get_editor_line_length() {
+                self.saturated_add_y();
+                self.cursor_x = 0;
+            }
         }
     }
 
     fn saturated_substract_x(&mut self) {
         if 0 < self.cursor_x {
             self.cursor_x = self.cursor_x - 1;
+        } else {
+            if 0 < self.cursor_y {
+                self.saturated_substract_y();
+                self.cursor_x = self.get_current_row_length();
+            }
         }
     }
 
@@ -182,7 +192,7 @@ impl Viewer {
     }
 
     fn get_current_row_length(&self) -> u16 {
-       self.editor_lines[self.cursor_y as usize]
+        self.editor_lines[self.cursor_y as usize]
             .line
             .chars()
             .count() as u16
