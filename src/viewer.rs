@@ -4,6 +4,7 @@ use termion::input::TermRead;
 use termion::raw::IntoRawMode;
 use termion::*;
 
+use chrono::{DateTime, Duration, Utc};
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::BufRead;
@@ -12,7 +13,7 @@ use std::io::BufReader;
 use termion::screen::AlternateScreen;
 
 const KILO_VERSION: &str = "1.0";
-const STATUS_LINES: u16 = 1;
+const STATUS_LINE_LENGTH: u16 = 2;
 
 pub struct Viewer {
     stdout: AlternateScreen<termion::raw::RawTerminal<std::io::Stdout>>,
@@ -25,6 +26,8 @@ pub struct Viewer {
     window_size_row: u16,
     editor_lines: Vec<EditorLine>,
     file_name: Option<String>,
+    status_message: String,
+    status_message_time: DateTime<Utc>,
 }
 
 struct EditorLine {
@@ -46,12 +49,14 @@ impl Viewer {
         let stdout = Viewer::enable_raw_mode();
         let (window_size_col, mut window_size_row) = Viewer::get_window_size();
 
-        window_size_row = window_size_row - STATUS_LINES;
+        window_size_row = window_size_row - STATUS_LINE_LENGTH;
         let cursor_x = 0;
         let cursor_y = 0;
         let render_x = 0;
         let row_offset = 0;
         let column_offset = 0;
+        let status_message = String::new();
+        let status_message_time = Utc::now();
 
         Self {
             stdout,
@@ -64,6 +69,8 @@ impl Viewer {
             window_size_row,
             editor_lines: vec![],
             file_name: None,
+            status_message,
+            status_message_time,
         }
     }
 
@@ -157,6 +164,7 @@ impl Viewer {
 
         self.editor_draw_rows();
         self.editor_draw_status_bar();
+        self.editor_draw_message_bar();
 
         eprintln!(
             "cursor goto {}: {}. row_offset: {}. editor_line: {}",
@@ -212,6 +220,11 @@ impl Viewer {
             .count() as u16
     }
 
+    fn set_status_message(&mut self, status_massage: String) {
+        self.status_message = status_massage;
+        self.status_message_time = Utc::now()
+    }
+
     fn editor_draw_status_bar(&mut self) {
         let file_name_limit_char_length = 20 as usize;
         let mut display_file_name = String::new();
@@ -247,6 +260,29 @@ impl Viewer {
             color::Bg(color::LightMagenta),
             color::Fg(color::Black),
             status_line,
+            style::Reset
+        )
+        .unwrap();
+        write!(self.stdout, "\r\n").unwrap();
+    }
+
+    fn editor_draw_message_bar(&mut self) {
+        let mut message_line = String::new();
+        if self.status_message_time + Duration::seconds(5) < Utc::now() {
+            return;
+        }
+        for (i, c) in self.status_message.chars().enumerate() {
+            if i < self.window_size_col as usize {
+                message_line.push(c)
+            }
+        }
+
+        write!(
+            self.stdout,
+            "{}{}{}{}",
+            color::Bg(color::LightMagenta),
+            color::Fg(color::Black),
+            message_line,
             style::Reset
         )
         .unwrap();
@@ -295,7 +331,6 @@ impl Viewer {
 
     fn editor_scroll(&mut self) {
         if self.cursor_y < self.get_editor_line_length() {
-            eprintln!("reached here");
             self.render_x = self.editor_row_cx2rx();
         }
 
@@ -320,6 +355,8 @@ impl Viewer {
         let mut viewer = Viewer::new();
 
         let file_name = "./hello_world.txt";
+        viewer.set_status_message(String::from("HELP: Ctr-C = quit"));
+
         viewer.editor_open(file_name);
         viewer.editor_refresh_screen();
 
