@@ -12,16 +12,19 @@ use std::io::BufReader;
 use termion::screen::AlternateScreen;
 
 const KILO_VERSION: &str = "1.0";
+const STATUS_LINES: u16 = 1;
 
 pub struct Viewer {
     stdout: AlternateScreen<termion::raw::RawTerminal<std::io::Stdout>>,
     cursor_x: u16,
+    render_x: u16,
     cursor_y: u16,
     row_offset: u16,
     column_offset: u16,
     window_size_col: u16,
     window_size_row: u16,
     editor_lines: Vec<EditorLine>,
+    file_name: Option<String>,
 }
 
 struct EditorLine {
@@ -41,9 +44,12 @@ impl Viewer {
 
     fn new() -> Self {
         let stdout = Viewer::enable_raw_mode();
-        let (window_size_col, window_size_row) = Viewer::get_window_size();
+        let (window_size_col, mut window_size_row) = Viewer::get_window_size();
+
+        window_size_row = window_size_row - STATUS_LINES;
         let cursor_x = 0;
         let cursor_y = 0;
+        let render_x = 0;
         let row_offset = 0;
         let column_offset = 0;
 
@@ -51,11 +57,13 @@ impl Viewer {
             stdout,
             cursor_x,
             cursor_y,
+            render_x,
             row_offset,
             column_offset,
             window_size_col,
             window_size_row,
             editor_lines: vec![],
+            file_name: None,
         }
     }
 
@@ -71,6 +79,7 @@ impl Viewer {
                 Err(_) => {}
             }
         }
+        self.file_name = Some(String::from(file_name));
         self.editor_lines = editor_lines;
     }
 
@@ -137,16 +146,21 @@ impl Viewer {
         }
     }
 
+    fn editor_row_cx2rx(&mut self) -> u16 {
+        self.cursor_x
+    }
+
     fn editor_refresh_screen(&mut self) {
         self.editor_scroll();
         write!(self.stdout, "{}", clear::All).unwrap();
         write!(self.stdout, "{}", cursor::Goto(1, 1)).unwrap();
 
         self.editor_draw_rows();
+        self.editor_draw_status_bar();
 
         eprintln!(
             "cursor goto {}: {}. row_offset: {}. editor_line: {}",
-            self.cursor_x,
+            self.render_x,
             self.cursor_y,
             self.row_offset,
             self.editor_lines.len()
@@ -155,7 +169,7 @@ impl Viewer {
             self.stdout,
             "{}",
             cursor::Goto(
-                self.cursor_x + 1 - self.column_offset,
+                self.render_x + 1 - self.column_offset,
                 self.cursor_y + 1 - self.row_offset
             )
         )
@@ -198,6 +212,46 @@ impl Viewer {
             .count() as u16
     }
 
+    fn editor_draw_status_bar(&mut self) {
+        let file_name_limit_char_length = 20 as usize;
+        let mut display_file_name = String::new();
+        match &self.file_name {
+            Some(s) => {
+                for (i, c) in s.chars().enumerate() {
+                    if i < file_name_limit_char_length {
+                        display_file_name.push(c);
+                    }
+                }
+                display_file_name = s.to_string()
+            }
+            None => display_file_name = String::from("[No Name]"),
+        }
+        let mut status = format!(
+            "{} - {} lines",
+            display_file_name,
+            self.get_editor_line_length()
+        );
+        let right_status = format!("{}/{}", self.cursor_y + 1, self.get_editor_line_length());
+        if status.chars().count() + right_status.chars().count() < self.window_size_col as usize {
+            for _ in
+                status.chars().count()..self.window_size_col as usize - right_status.chars().count()
+            {
+                status.push(' ')
+            }
+        }
+        let status_line = format!("{}{}", status, right_status);
+
+        write!(
+            self.stdout,
+            "{}{}{}{}",
+            color::Bg(color::LightMagenta),
+            color::Fg(color::Black),
+            status_line,
+            style::Reset
+        )
+        .unwrap();
+    }
+
     fn editor_draw_rows(&mut self) {
         for i in 0..self.window_size_row {
             let file_row = i + self.row_offset as u16;
@@ -233,12 +287,18 @@ impl Viewer {
                 write!(self.stdout, "{}", line).unwrap();
             }
 
-            if i < self.window_size_row - 1 {
+            if i < self.window_size_row {
                 write!(self.stdout, "\r\n").unwrap();
             }
         }
     }
+
     fn editor_scroll(&mut self) {
+        if self.cursor_y < self.get_editor_line_length() {
+            eprintln!("reached here");
+            self.render_x = self.editor_row_cx2rx();
+        }
+
         if self.cursor_y < self.row_offset {
             self.row_offset = self.cursor_y;
         }
@@ -247,12 +307,12 @@ impl Viewer {
             self.row_offset = self.cursor_y - self.window_size_row + 1;
         }
 
-        if self.cursor_x < self.column_offset {
-            self.column_offset = self.cursor_x;
+        if self.render_x < self.column_offset {
+            self.column_offset = self.render_x;
         }
 
-        if self.cursor_x >= self.column_offset + self.window_size_col {
-            self.column_offset = self.cursor_x - self.window_size_col + 1;
+        if self.render_x >= self.column_offset + self.window_size_col {
+            self.column_offset = self.render_x - self.window_size_col + 1;
         }
     }
 
