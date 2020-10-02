@@ -15,6 +15,7 @@ use termion::screen::AlternateScreen;
 
 const KILO_VERSION: &str = "1.0";
 const STATUS_LINE_LENGTH: u16 = 2;
+const QUIT_TIMES: u8 = 1; // 1 for dev.
 
 pub struct Viewer {
     stdout: AlternateScreen<termion::raw::RawTerminal<std::io::Stdout>>,
@@ -30,6 +31,7 @@ pub struct Viewer {
     status_message: String,
     status_message_time: DateTime<Utc>,
     is_dirty: bool,
+    quit_times: u8,
 }
 
 struct EditorLine {
@@ -60,6 +62,7 @@ impl Viewer {
         let status_message = String::new();
         let status_message_time = Utc::now();
         let is_dirty = false;
+        let quit_times = QUIT_TIMES;
 
         Self {
             stdout,
@@ -75,6 +78,7 @@ impl Viewer {
             status_message,
             status_message_time,
             is_dirty,
+            quit_times,
         }
     }
 
@@ -193,6 +197,15 @@ impl Viewer {
                 Ok(event::Key::Ctrl('c')) | Ok(event::Key::Ctrl('q')) => break,
                 Ok(event::Key::Delete) => {} //TODO
                 Ok(event::Key::Backspace) | Ok(event::Key::Ctrl('h')) => {} //TODO
+                Ok(event::Key::Ctrl('c')) | Ok(event::Key::Ctrl('q')) => {
+                    if self.is_dirty && self.quit_times > 0 {
+                        // TODO 他の作業をしたらquit_timesが回復するように
+                        self.set_status_message(format!("WARNING!!! File has unsaved changes. Press Ctr-Q|C {} more times to quit", self.quit_times));
+                        self.quit_times = self.quit_times - 1;
+                    } else {
+                        break;
+                    }
+                }
                 Ok(event::Key::Ctrl('s')) => self.editor_save(),
                 Ok(event::Key::Left) => {
                     self.saturated_substract_x();
