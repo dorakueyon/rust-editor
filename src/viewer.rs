@@ -184,7 +184,6 @@ impl Viewer {
     fn editor_process_key_press(&mut self) {
         for c in stdin().keys() {
             dbg!(&c);
-            self.stdout.flush().unwrap();
             match c {
                 Ok(event::Key::Ctrl('c')) | Ok(event::Key::Ctrl('q')) => break,
                 Ok(event::Key::Delete) => {} //TODO
