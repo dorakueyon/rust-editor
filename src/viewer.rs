@@ -150,7 +150,7 @@ impl Viewer {
                 .chars()
                 .enumerate()
             {
-                if i == self.cursor_x as usize {
+                if i == self.cursor_x as usize + 1 {
                     new_line.push(c)
                 }
                 new_line.push(c_existed)
@@ -194,9 +194,6 @@ impl Viewer {
         for c in stdin().keys() {
             dbg!(&c);
             match c {
-                Ok(event::Key::Ctrl('c')) | Ok(event::Key::Ctrl('q')) => break,
-                Ok(event::Key::Delete) => {} //TODO
-                Ok(event::Key::Backspace) | Ok(event::Key::Ctrl('h')) => {} //TODO
                 Ok(event::Key::Ctrl('c')) | Ok(event::Key::Ctrl('q')) => {
                     if self.is_dirty && self.quit_times > 0 {
                         // TODO 他の作業をしたらquit_timesが回復するように
@@ -222,7 +219,6 @@ impl Viewer {
                 Ok(event::Key::Char(c)) => {
                     if c == '\n' {
                         // enter
-                        eprintln!("enter pressed");
                     } else {
                         self.editor_insert_char(c)
                     }
@@ -247,19 +243,21 @@ impl Viewer {
         self.editor_draw_message_bar();
 
         eprintln!(
-            "cursor goto {}: {}. row_offset: {}. editor_line: {}",
+            "cursor goto {}: {}. row_offset: {}.  current_row_length: {}, editor_line: {}",
             self.render_x,
             self.cursor_y,
             self.row_offset,
+            self.get_current_row_length(),
             self.editor_lines.len()
         );
         write!(
             self.stdout,
-            "{}",
+            "{}{}",
+            cursor::BlinkingBar,
             cursor::Goto(
                 self.render_x + 1 - self.column_offset,
                 self.cursor_y + 1 - self.row_offset
-            )
+            ),
         )
         .unwrap();
 
@@ -306,6 +304,7 @@ impl Viewer {
             .line
             .chars()
             .count() as u16
+            - 1 //TODO: ignore \r\n
     }
 
     fn set_status_message(&mut self, status_massage: String) {
@@ -412,7 +411,7 @@ impl Viewer {
             }
 
             if i < self.window_size_row {
-                write!(self.stdout, "\r\n").unwrap();
+                write!(self.stdout, "\n\r").unwrap();
             }
         }
     }
