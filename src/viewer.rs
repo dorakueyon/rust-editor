@@ -29,6 +29,7 @@ pub struct Viewer {
     file_name: Option<String>,
     status_message: String,
     status_message_time: DateTime<Utc>,
+    is_dirty: bool,
 }
 
 struct EditorLine {
@@ -58,6 +59,7 @@ impl Viewer {
         let column_offset = 0;
         let status_message = String::new();
         let status_message_time = Utc::now();
+        let is_dirty = false;
 
         Self {
             stdout,
@@ -72,6 +74,7 @@ impl Viewer {
             file_name: None,
             status_message,
             status_message_time,
+            is_dirty,
         }
     }
 
@@ -151,6 +154,7 @@ impl Viewer {
         }
         self.editor_lines[self.cursor_y as usize].line = new_line;
         self.saturated_add_x();
+        self.is_dirty = true;
     }
 
     fn editor_insert_char(&mut self, c: char) {
@@ -169,6 +173,7 @@ impl Viewer {
                             f.write_all(line.as_bytes()).unwrap();
                             f.write_all(b"\r\n").unwrap();
                         }
+                        self.is_dirty = false;
                         self.set_status_message(format!(
                             "{} bytes written to disk",
                             self.get_editor_buffer_length()
@@ -305,14 +310,14 @@ impl Viewer {
                         display_file_name.push(c);
                     }
                 }
-                display_file_name = s.to_string()
             }
             None => display_file_name = String::from("[No Name]"),
         }
         let mut status = format!(
-            "{} - {} lines",
+            "{} - {} lines {}",
             display_file_name,
-            self.get_editor_line_length()
+            self.get_editor_line_length(),
+            if self.is_dirty { "(modified)" } else { "" }
         );
         let right_status = format!("{}/{}", self.cursor_y + 1, self.get_editor_line_length());
         if status.chars().count() + right_status.chars().count() < self.window_size_col as usize {
