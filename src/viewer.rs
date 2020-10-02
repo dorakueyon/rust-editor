@@ -34,6 +34,7 @@ pub struct Viewer {
     quit_times: u8,
 }
 
+#[derive(Debug)]
 struct EditorLine {
     line: String,
 }
@@ -223,6 +224,53 @@ impl Viewer {
         }
     }
 
+    fn split_line_resulted_from_enter_pressed(&self) -> (String, String) {
+        let mut left_line = String::from("\r");
+        let mut right_line = String::from("\r");
+
+        for i in 0..self.get_current_row_length() {
+            let c = self.editor_lines[self.cursor_y as usize]
+                .line
+                .chars()
+                .nth(i as usize)
+                .unwrap();
+            if i <= self.cursor_x {
+                left_line.push(c)
+            } else {
+                right_line.push(c)
+            }
+        }
+        (left_line, right_line)
+    }
+
+    fn editor_insert_new_line(&mut self) {
+        let mut new_el_vec = vec![];
+        let (left_line, right_line) = self.split_line_resulted_from_enter_pressed();
+        for (i, el) in self.editor_lines.iter().enumerate() {
+            // new line
+            if i == self.cursor_y as usize + 1 {
+                new_el_vec.push(EditorLine {
+                    line: right_line.clone(),
+                })
+            }
+
+            // splited line
+            if i == self.cursor_y as usize {
+                new_el_vec.push(EditorLine {
+                    line: left_line.clone(),
+                })
+            // just  line
+            } else {
+                new_el_vec.push(EditorLine {
+                    line: el.line.clone(),
+                });
+            }
+        }
+        self.editor_lines = new_el_vec;
+        self.saturated_add_y();
+        self.cursor_x = 0
+    }
+
     fn editor_save(&mut self) {
         match &self.file_name {
             None => return,
@@ -279,7 +327,7 @@ impl Viewer {
                 }
                 Ok(event::Key::Char(c)) => {
                     if c == '\n' {
-                        // enter
+                        self.editor_insert_new_line()
                     } else {
                         self.editor_insert_char(c)
                     }
