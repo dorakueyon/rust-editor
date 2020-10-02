@@ -165,6 +165,64 @@ impl Viewer {
         self.editor_row_insert_char(c)
     }
 
+    fn editor_row_delete_character(&mut self) {
+        let mut new_line = String::new();
+        for (i, c) in self.editor_lines[self.cursor_y as usize]
+            .line
+            .chars()
+            .enumerate()
+        {
+            if i == self.cursor_x as usize {
+                continue;
+            }
+            new_line.push(c)
+        }
+
+        self.editor_lines[self.cursor_y as usize].line = new_line;
+
+        self.is_dirty = true
+    }
+
+    fn editor_delete_row(&mut self) {
+        self.editor_lines.remove(self.cursor_y as usize);
+    }
+
+    fn editor_row_append_string(&mut self, append_from_row_index: usize) {
+        let append_to_row_index = append_from_row_index - 1;
+
+        let copy_to_line = self.editor_lines[append_to_row_index].line.clone();
+        let copy_from_line = self.editor_lines[append_from_row_index]
+            .line
+            .trim_start() // TODO: this trimes space(s) too.
+            .clone();
+
+        let new_line = format!("{}{}", copy_to_line, copy_from_line);
+
+        self.editor_lines[append_to_row_index].line = new_line;
+        self.is_dirty = true;
+    }
+
+    fn editor_delete_char(&mut self) {
+        if self.cursor_x == 0 && self.cursor_y == 0 {
+            return;
+        }
+
+        if self.cursor_x > 0 {
+            self.editor_row_delete_character();
+            self.cursor_x = self.cursor_x - 1;
+        } else {
+            self.cursor_x = (self.editor_lines[self.cursor_y as usize - 1]
+                .line
+                .chars()
+                .count()
+                - 1) as u16;
+
+            self.editor_row_append_string(self.cursor_y as usize);
+            self.editor_delete_row();
+            self.cursor_y = self.cursor_y - 1;
+        }
+    }
+
     fn editor_save(&mut self) {
         match &self.file_name {
             None => return,
@@ -202,6 +260,9 @@ impl Viewer {
                     } else {
                         break;
                     }
+                }
+                Ok(event::Key::Backspace) | Ok(event::Key::Ctrl('h')) | Ok(event::Key::Delete) => {
+                    self.editor_delete_char();
                 }
                 Ok(event::Key::Ctrl('s')) => self.editor_save(),
                 Ok(event::Key::Left) => {
