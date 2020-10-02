@@ -9,6 +9,7 @@ use std::fmt::Debug;
 use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
+use std::io::Read;
 
 use termion::screen::AlternateScreen;
 
@@ -79,6 +80,7 @@ impl Viewer {
             Err(why) => panic!("couldn't open {}: {}", file_name, why),
             Ok(file) => file,
         };
+
         let mut editor_lines = vec![];
         for line in BufReader::new(file).lines() {
             match line {
@@ -86,8 +88,9 @@ impl Viewer {
                 Err(_) => {}
             }
         }
-        self.file_name = Some(String::from(file_name));
         self.editor_lines = editor_lines;
+
+        self.file_name = Some(String::from(file_name));
     }
 
     fn saturated_add_x(&mut self) {
@@ -130,11 +133,63 @@ impl Viewer {
         }
     }
 
+    fn editor_row_insert_char(&mut self, c: char) {
+        let mut new_line = String::new();
+        if self.cursor_x == self.get_current_row_length() {
+            new_line = format!("{}{}", self.editor_lines[self.cursor_y as usize].line, c)
+        } else {
+            for (i, c_existed) in self.editor_lines[self.cursor_y as usize]
+                .line
+                .chars()
+                .enumerate()
+            {
+                if i == self.cursor_x as usize {
+                    new_line.push(c)
+                }
+                new_line.push(c_existed)
+            }
+        }
+        self.editor_lines[self.cursor_y as usize].line = new_line;
+        self.saturated_add_x();
+    }
+
+    fn editor_insert_char(&mut self, c: char) {
+        self.editor_row_insert_char(c)
+    }
+
+    fn editor_save(&mut self) {
+        match &self.file_name {
+            None => return,
+            Some(s) => {
+                eprintln!("{}", s);
+                match File::create(s) {
+                    Ok(mut f) => {
+                        for i in 0..self.get_editor_line_length() {
+                            let line = &self.editor_lines[i as usize].line;
+                            f.write_all(line.as_bytes()).unwrap();
+                            f.write_all(b"\r\n").unwrap();
+                        }
+                        self.set_status_message(format!(
+                            "{} bytes written to disk",
+                            self.get_editor_buffer_length()
+                        ));
+                    }
+
+                    Err(e) => self.set_status_message(format!("Can't save! I/O error: {}", e)),
+                }
+            }
+        }
+    }
+
     fn editor_process_key_press(&mut self) {
         for c in stdin().keys() {
+            dbg!(&c);
             self.stdout.flush().unwrap();
             match c {
                 Ok(event::Key::Ctrl('c')) | Ok(event::Key::Ctrl('q')) => break,
+                Ok(event::Key::Delete) => {} //TODO
+                Ok(event::Key::Backspace) | Ok(event::Key::Ctrl('h')) => {} //TODO
+                Ok(event::Key::Ctrl('s')) => self.editor_save(),
                 Ok(event::Key::Left) => {
                     self.saturated_substract_x();
                 }
@@ -146,6 +201,14 @@ impl Viewer {
                 }
                 Ok(event::Key::Down) => {
                     self.saturated_add_y();
+                }
+                Ok(event::Key::Char(c)) => {
+                    if c == '\n' {
+                        // enter
+                        eprintln!("enter pressed");
+                    } else {
+                        self.editor_insert_char(c)
+                    }
                 }
                 _ => {}
             }
@@ -211,6 +274,14 @@ impl Viewer {
 
     fn get_editor_line_length(&self) -> u16 {
         self.editor_lines.len() as u16
+    }
+
+    fn get_editor_buffer_length(&self) -> u16 {
+        let mut sum = 0;
+        for line in &self.editor_lines {
+            sum = sum + line.line.as_bytes().len()
+        }
+        sum as u16
     }
 
     fn get_current_row_length(&self) -> u16 {
@@ -355,7 +426,7 @@ impl Viewer {
         let mut viewer = Viewer::new();
 
         let file_name = "./hello_world.txt";
-        viewer.set_status_message(String::from("HELP: Ctr-C = quit"));
+        viewer.set_status_message(String::from("HELP: Ctr-S = save | Ctr-C = quit"));
 
         viewer.editor_open(file_name);
         viewer.editor_refresh_screen();
