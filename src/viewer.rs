@@ -150,7 +150,7 @@ impl Viewer {
                 .chars()
                 .enumerate()
             {
-                if i == self.cursor_x as usize + 1 {
+                if i == self.cursor_x as usize {
                     new_line.push(c)
                 }
                 new_line.push(c_existed)
@@ -172,7 +172,7 @@ impl Viewer {
             .chars()
             .enumerate()
         {
-            if i == self.cursor_x as usize {
+            if i == self.cursor_x as usize - 1 {
                 continue;
             }
             new_line.push(c)
@@ -413,7 +413,7 @@ impl Viewer {
             .line
             .chars()
             .count() as u16
-            - 1 //TODO: ignore \r\n
+        //- 1 //TODO: ignore \r\n
     }
 
     fn set_status_message(&mut self, status_massage: String) {
