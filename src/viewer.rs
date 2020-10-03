@@ -270,6 +270,39 @@ impl Viewer {
         self.cursor_x = 0
     }
 
+    fn editor_prompt(&mut self, prompt: String) -> String {
+        let mut input = String::new();
+        self.set_status_message(format!("{}{}", prompt, input));
+        self.editor_refresh_screen();
+
+        for r in stdin().keys() {
+            match r {
+                Ok(event::Key::Char(c)) => {
+                    if c == '\n' {
+                        if !prompt.is_empty() {
+                            self.set_status_message(String::new());
+                            return input;
+                        }
+                    } else {
+                        input.push(c);
+                    }
+                }
+                Ok(Key::Backspace) | Ok(Key::Delete) => {
+                    input.pop();
+                }
+                Ok(Key::Esc) => {
+                    self.set_status_message(String::new());
+                    return String::new();
+                }
+                _ => {}
+            }
+            self.set_status_message(format!("{}{}", prompt, input));
+            self.editor_refresh_screen();
+        }
+
+        prompt
+    }
+
     fn editor_save(&mut self) {
         // TODO: Save as ...
         match &self.file_name {
@@ -296,9 +329,43 @@ impl Viewer {
         }
     }
 
+    fn editor_row_rx2cx(&mut self, rx: usize) -> u16 {
+        let mut current_render_x = 0;
+
+        for i in 0..self.get_current_row_length() {
+            current_render_x = current_render_x + 1;
+
+            if current_render_x > rx {
+                return i;
+            }
+        }
+
+        return self.get_current_row_length();
+    }
+
+    fn editor_find(&mut self) {
+        let query = self.editor_prompt(String::from("Search:"));
+
+        eprintln!("{}", query);
+        if query.is_empty() {
+            return;
+        }
+        eprintln!("{}", query);
+        eprintln!("reached here");
+        for (y, e_l) in self.editor_lines.iter().enumerate() {
+            if let Some(x) = e_l.line.find(&query) {
+                eprintln!("found!");
+                self.cursor_y = y as u16;
+                self.cursor_x = self.editor_row_rx2cx(x);
+                break;
+            }
+        }
+    }
+
     fn editor_process_key_press(&mut self) {
         for c in stdin().keys() {
-            dbg!(&c);
+            //dbg!(&c);
+            dbg!(&self.editor_lines[self.cursor_y as usize]);
             match c {
                 Ok(event::Key::Ctrl('c')) | Ok(event::Key::Ctrl('q')) => {
                     if self.is_dirty && self.quit_times > 0 {
@@ -313,6 +380,7 @@ impl Viewer {
                     self.editor_delete_char();
                 }
                 Ok(event::Key::Ctrl('s')) => self.editor_save(),
+                Ok(event::Key::Ctrl('f')) => self.editor_find(),
                 Ok(event::Key::Left) => {
                     self.saturated_substract_x();
                 }
@@ -551,7 +619,9 @@ impl Viewer {
         let mut viewer = Viewer::new();
 
         let file_name = "./hello_world.txt";
-        viewer.set_status_message(String::from("HELP: Ctr-S = save | Ctr-C = quit"));
+        viewer.set_status_message(String::from(
+            "HELP: Ctr-S = save | Ctr-C = quit | Ctrl-F = find",
+        ));
 
         viewer.editor_open(file_name);
         viewer.editor_refresh_screen();
