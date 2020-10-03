@@ -270,17 +270,26 @@ impl Viewer {
         self.cursor_x = 0
     }
 
-    fn editor_prompt(&mut self, prompt: String) -> String {
+    fn editor_prompt<F>(&mut self, prompt: String, mut incremental_callback: F) -> String
+    where
+        F: FnMut(&mut Self, &str),
+    {
         let mut input = String::new();
         self.set_status_message(format!("{}{}", prompt, input));
         self.editor_refresh_screen();
 
         for r in stdin().keys() {
             match r {
+                Ok(Key::Esc) => {
+                    self.set_status_message(String::new());
+                    incremental_callback(self, &input);
+                    return String::new();
+                }
                 Ok(event::Key::Char(c)) => {
                     if c == '\n' {
                         if !prompt.is_empty() {
                             self.set_status_message(String::new());
+                            incremental_callback(self, &input);
                             return input;
                         }
                     } else {
@@ -290,12 +299,9 @@ impl Viewer {
                 Ok(Key::Backspace) | Ok(Key::Delete) => {
                     input.pop();
                 }
-                Ok(Key::Esc) => {
-                    self.set_status_message(String::new());
-                    return String::new();
-                }
                 _ => {}
             }
+            incremental_callback(self, &input);
             self.set_status_message(format!("{}{}", prompt, input));
             self.editor_refresh_screen();
         }
@@ -343,10 +349,7 @@ impl Viewer {
         return self.get_current_row_length();
     }
 
-    fn editor_find(&mut self) {
-        let query = self.editor_prompt(String::from("Search:"));
-
-        eprintln!("{}", query);
+    fn on_incremental_find(&mut self, query: &str) {
         if query.is_empty() {
             return;
         }
@@ -358,8 +361,12 @@ impl Viewer {
                 self.cursor_y = y as u16;
                 self.cursor_x = self.editor_row_rx2cx(x);
                 break;
-            }
+            };
         }
+    }
+
+    fn editor_find(&mut self) {
+        self.editor_prompt(String::from("Search:"), Self::on_incremental_find);
     }
 
     fn editor_process_key_press(&mut self) {
