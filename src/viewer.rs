@@ -9,7 +9,6 @@ use std::fmt::Debug;
 use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
-use std::io::Read;
 
 use termion::screen::AlternateScreen;
 
