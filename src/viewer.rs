@@ -366,7 +366,18 @@ impl Viewer {
     }
 
     fn editor_find(&mut self) {
-        self.editor_prompt(String::from("Search:"), Self::on_incremental_find);
+        let saved_cursor_x = self.cursor_x;
+        let saved_cursor_y = self.cursor_y;
+        let saved_column_offset = self.column_offset;
+        let saved_row_offset = self.row_offset;
+
+        let query = self.editor_prompt(String::from("Search:"), Self::on_incremental_find);
+        if query.is_empty() {
+            self.cursor_x = saved_cursor_x;
+            self.cursor_y = saved_cursor_y;
+            self.column_offset = saved_column_offset;
+            self.row_offset = saved_row_offset;
+        }
     }
 
     fn editor_process_key_press(&mut self) {
