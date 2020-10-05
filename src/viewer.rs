@@ -16,6 +16,27 @@ const KILO_VERSION: &str = "1.0";
 const STATUS_LINE_LENGTH: u16 = 2;
 const QUIT_TIMES: u8 = 1; // 1 for dev.
 
+#[derive(Debug)]
+pub enum IncrementFindDirection {
+    Forward,
+    Backward,
+}
+
+#[derive(Debug)]
+pub struct IncrementFind {
+    last_mached_row: Option<i16>,
+    direction: IncrementFindDirection,
+}
+
+impl IncrementFind {
+    fn new() -> Self {
+        Self {
+            last_mached_row: None,
+            direction: IncrementFindDirection::Forward,
+        }
+    }
+}
+
 pub struct Viewer {
     stdout: AlternateScreen<termion::raw::RawTerminal<std::io::Stdout>>,
     cursor_x: u16,
@@ -31,6 +52,7 @@ pub struct Viewer {
     status_message_time: DateTime<Utc>,
     is_dirty: bool,
     quit_times: u8,
+    increment_find: IncrementFind,
 }
 
 #[derive(Debug)]
@@ -79,6 +101,7 @@ impl Viewer {
             status_message_time,
             is_dirty,
             quit_times,
+            increment_find: IncrementFind::new(),
         }
     }
 
@@ -272,36 +295,39 @@ impl Viewer {
 
     fn editor_prompt<F>(&mut self, prompt: String, mut incremental_callback: F) -> String
     where
-        F: FnMut(&mut Self, &str),
+        F: FnMut(&mut Self, &str, &Key, bool),
     {
         let mut input = String::new();
         self.set_status_message(format!("{}{}", prompt, input));
         self.editor_refresh_screen();
 
         for r in stdin().keys() {
-            match r {
+            match &r {
                 Ok(Key::Esc) => {
                     self.set_status_message(String::new());
-                    incremental_callback(self, &input);
+                    incremental_callback(self, &input, &r.unwrap(), true);
                     return String::new();
                 }
                 Ok(event::Key::Char(c)) => {
-                    if c == '\n' {
+                    if *c == '\n' {
                         if !prompt.is_empty() {
                             self.set_status_message(String::new());
-                            incremental_callback(self, &input);
+                            incremental_callback(self, &input, &r.unwrap(), true);
                             return input;
                         }
                     } else {
-                        input.push(c);
+                        input.push(c.clone());
                     }
                 }
                 Ok(Key::Backspace) | Ok(Key::Delete) => {
                     input.pop();
                 }
+                Ok(Key::Right) | Ok(Key::Left) | Ok(Key::Down) | Ok(Key::Up) => match &r {
+                    Ok(key) => incremental_callback(self, &input, &key, false),
+                    Err(_) => {}
+                },
                 _ => {}
             }
-            incremental_callback(self, &input);
             self.set_status_message(format!("{}{}", prompt, input));
             self.editor_refresh_screen();
         }
@@ -349,22 +375,46 @@ impl Viewer {
         return self.get_current_row_length();
     }
 
-    fn on_incremental_find(&mut self, query: &str) {
-        if query.is_empty() {
-            return;
+    fn on_incremental_find(&mut self, query: &str, key: &Key, end: bool) {
+        if end {
+            self.increment_find = IncrementFind::new()
         }
-        eprintln!("{}", query);
-        eprintln!("reached here");
-        for (y, e_l) in self.editor_lines.iter().enumerate() {
-            if let Some(x) = e_l.line.find(&query) {
-                eprintln!("found!");
-                self.cursor_y = y as u16;
+        match key {
+            Key::Right | Key::Down => {
+                self.increment_find.direction = IncrementFindDirection::Forward
+            }
+            Key::Left | Key::Up => self.increment_find.direction = IncrementFindDirection::Backward,
+            _ => {
+                self.increment_find = IncrementFind::new();
+            }
+        };
+
+        let mut current = -1;
+        if let Some(i) = self.increment_find.last_mached_row {
+            current = i
+        }
+
+        for _ in 0..self.get_editor_line_length() {
+            match self.increment_find.direction {
+                IncrementFindDirection::Forward => current = current + 1,
+                IncrementFindDirection::Backward => current = current - 1,
+            }
+            if current == -1 {
+                current = self.get_editor_line_length() as i16 - 1
+            } else if current == self.get_editor_line_length() as i16 {
+                current = 0
+            }
+
+            let row = &self.editor_lines[current as usize].line;
+
+            if let Some(x) = row.find(&query) {
+                self.increment_find.last_mached_row = Some(current as i16);
+                self.cursor_y = current as u16;
                 self.cursor_x = self.editor_row_rx2cx(x);
                 break;
-            };
+            }
         }
     }
-
     fn editor_find(&mut self) {
         let saved_cursor_x = self.cursor_x;
         let saved_cursor_y = self.cursor_y;
@@ -388,7 +438,10 @@ impl Viewer {
                 Ok(event::Key::Ctrl('c')) | Ok(event::Key::Ctrl('q')) => {
                     if self.is_dirty && self.quit_times > 0 {
                         // TODO 他の作業をしたらquit_timesが回復するように
-                        self.set_status_message(format!("WARNING!!! File has unsaved changes. Press Ctr-Q|C {} more times to quit", self.quit_times));
+                        self.set_status_message(format!(
+                        "WARNING!!! File has unsaved changes. Press Ctr-Q|C {} more times to quit",
+                        self.quit_times
+                    ));
                         self.quit_times = self.quit_times - 1;
                     } else {
                         break;
