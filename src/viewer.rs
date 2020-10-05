@@ -55,9 +55,15 @@ pub struct Viewer {
     increment_find: IncrementFind,
 }
 
+enum EditorHighlight {
+    Normal,
+    Number,
+}
+
 #[derive(Debug)]
 struct EditorLine {
     line: String,
+    high_light: Option<u8>,
 }
 
 impl Viewer {
@@ -114,7 +120,10 @@ impl Viewer {
         let mut editor_lines = vec![];
         for line in BufReader::new(file).lines() {
             match line {
-                Ok(s) => editor_lines.push(EditorLine { line: s }),
+                Ok(s) => editor_lines.push(EditorLine {
+                    line: s,
+                    high_light: None,
+                }),
                 Err(_) => {}
             }
         }
@@ -273,6 +282,7 @@ impl Viewer {
             if i == self.cursor_y as usize + 1 {
                 new_el_vec.push(EditorLine {
                     line: right_line.clone(),
+                    high_light: None,
                 })
             }
 
@@ -280,11 +290,13 @@ impl Viewer {
             if i == self.cursor_y as usize {
                 new_el_vec.push(EditorLine {
                     line: left_line.clone(),
+                    high_light: None,
                 })
             // just  line
             } else {
                 new_el_vec.push(EditorLine {
                     line: el.line.clone(),
+                    high_light: None,
                 });
             }
         }
@@ -685,6 +697,8 @@ impl Viewer {
             self.column_offset = self.render_x - self.window_size_col + 1;
         }
     }
+
+    fn editor_update_syntax() {}
 
     pub fn run_viwer() {
         let mut viewer = Viewer::new();
