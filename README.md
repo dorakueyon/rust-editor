@@ -9,6 +9,6 @@ following step by step editor tutorial written by C, [killo](https://viewsourcec
 - [x] Raw input and output
 - [x] A text viewer
 - [x] A text editor
-- [ ] Search
+- [x] Search
 - [ ] Syntax highlighting
 - [ ] Appendices
