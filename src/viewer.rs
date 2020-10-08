@@ -60,6 +60,7 @@ pub struct Viewer {
 enum EditorHighlight {
     Normal,
     Number,
+    Match,
 }
 
 impl EditorHighlight {
@@ -67,6 +68,7 @@ impl EditorHighlight {
         match self {
             EditorHighlight::Normal => color::AnsiValue(7), // White
             EditorHighlight::Number => color::AnsiValue(1), // Red
+            EditorHighlight::Match => color::AnsiValue(4),  // Blue
         }
     }
 }
@@ -467,6 +469,11 @@ impl Viewer {
                 self.increment_find.last_mached_row = Some(current_row as i16);
                 self.cursor_y = current_row as u16;
                 self.cursor_x = self.editor_row_rx2cx(x as u16);
+
+                for i in 0..query.chars().count() {
+                    self.editor_lines[current_row as usize].highlight[x + i] =
+                        EditorHighlight::Match
+                }
                 break;
             }
         }
@@ -785,17 +792,29 @@ impl Viewer {
             self.column_offset = self.render_x - self.window_size_col + 1;
         }
     }
+
+    fn is_digit(c: &char) -> bool {
+        match *c {
+            '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => return true,
+            _ => return false,
+        }
+    }
+
     fn editor_update_syntax(&mut self) {
         let mut highlight = vec![];
         for e_l in &self.editor_lines {
             let mut line = vec![];
+            let mut preivious_hilight = EditorHighlight::Normal;
             for (i, c) in e_l.render.iter().enumerate() {
-                match c {
-                    '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => {
-                        line.push(EditorHighlight::Number)
-                    }
-                    _ => line.push(EditorHighlight::Normal),
+                if i > 0 {
+                    preivious_hilight = line[i - 1];
                 }
+                if Self::is_digit(c) || (*c == '.' && preivious_hilight == EditorHighlight::Number)
+                {
+                    line.push(EditorHighlight::Number);
+                    continue;
+                }
+                line.push(EditorHighlight::Normal);
             }
             highlight.push(line);
         }
