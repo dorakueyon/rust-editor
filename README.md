@@ -1,4 +1,4 @@
-# original edotor written by Rust.
+# original editor written by Rust.
 
 ## Todo
 
