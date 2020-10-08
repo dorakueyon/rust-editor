@@ -56,15 +56,36 @@ pub struct Viewer {
     increment_find: IncrementFind,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq)]
 enum EditorHighlight {
     Normal,
     Number,
 }
 
-#[derive(Debug)]
+impl EditorHighlight {
+    fn editor_syntax_to_color(self) -> termion::color::AnsiValue {
+        match self {
+            EditorHighlight::Normal => color::AnsiValue(7), // White
+            EditorHighlight::Number => color::AnsiValue(1), // Red
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct EditorLine {
-    buf: String,
-    render: String,
+    buf: Vec<char>,
+    render: Vec<char>,
+    highlight: Vec<EditorHighlight>,
+}
+
+impl EditorLine {
+    fn render_string(&self) -> String {
+        let mut line = String::new();
+        for c in &self.render {
+            line.push(c.clone());
+        }
+        line
+    }
 }
 
 impl Viewer {
@@ -122,13 +143,14 @@ impl Viewer {
         for line in BufReader::new(file).lines() {
             match line {
                 Ok(s) => {
-                    let mut buf = String::new();
+                    let mut buf = vec![];
                     for c in s.trim_end().chars() {
                         buf.push(c);
                     }
                     editor_lines.push(EditorLine {
                         buf,
-                        render: String::new(),
+                        render: vec![],
+                        highlight: vec![],
                     });
                 }
                 Err(_) => {}
@@ -180,19 +202,20 @@ impl Viewer {
     }
 
     fn editor_row_insert_char(&mut self, c: char) {
-        let mut new_buf = String::new();
+        let mut new_buf = vec![];
         if self.cursor_x == self.get_current_row_buf_length() {
-            new_buf = format!("{}{}", self.editor_lines[self.cursor_y as usize].buf, c)
+            new_buf = self.editor_lines[self.cursor_y as usize].buf.clone();
+            new_buf.push(c);
         } else {
             for (i, c_existed) in self.editor_lines[self.cursor_y as usize]
                 .buf
-                .chars()
+                .iter()
                 .enumerate()
             {
                 if i == self.cursor_x as usize {
                     new_buf.push(c)
                 }
-                new_buf.push(c_existed)
+                new_buf.push(c_existed.clone())
             }
         }
         self.editor_lines[self.cursor_y as usize].buf = new_buf;
@@ -205,16 +228,16 @@ impl Viewer {
     }
 
     fn editor_row_delete_character(&mut self) {
-        let mut new_buf = String::new();
+        let mut new_buf = vec![];
         for (i, c) in self.editor_lines[self.cursor_y as usize]
             .buf
-            .chars()
+            .iter()
             .enumerate()
         {
             if i == self.cursor_x as usize - 1 {
                 continue;
             }
-            new_buf.push(c)
+            new_buf.push(c.clone())
         }
 
         self.editor_lines[self.cursor_y as usize].buf = new_buf;
@@ -229,12 +252,11 @@ impl Viewer {
     fn editor_row_append_string(&mut self, append_from_row_index: usize) {
         let append_to_row_index = append_from_row_index - 1;
 
-        let copy_to_buf = self.editor_lines[append_to_row_index].buf.clone();
-        let copy_from_buf = self.editor_lines[append_from_row_index].buf.clone();
+        let mut move_to_buf = self.editor_lines[append_to_row_index].buf.clone();
+        let mut move_from_buf = self.editor_lines[append_from_row_index].buf.clone();
+        move_to_buf.append(&mut move_from_buf);
 
-        let new_buf = format!("{}{}", copy_to_buf, copy_from_buf);
-
-        self.editor_lines[append_to_row_index].buf = new_buf;
+        self.editor_lines[append_to_row_index].buf = move_to_buf;
         self.is_dirty = true;
     }
 
@@ -247,10 +269,7 @@ impl Viewer {
             self.editor_row_delete_character();
             self.cursor_x = self.cursor_x - 1;
         } else {
-            self.cursor_x = (self.editor_lines[self.cursor_y as usize - 1]
-                .buf
-                .chars()
-                .count()) as u16;
+            self.cursor_x = self.editor_lines[self.cursor_y as usize - 1].buf.len() as u16;
 
             self.editor_row_append_string(self.cursor_y as usize);
             self.editor_delete_row();
@@ -258,16 +277,12 @@ impl Viewer {
         }
     }
 
-    fn split_line_resulted_from_enter_pressed(&self) -> (String, String) {
-        let mut left_buf = String::new();
-        let mut right_buf = String::new();
+    fn split_line_resulted_from_enter_pressed(&self) -> (Vec<char>, Vec<char>) {
+        let mut left_buf = vec![];
+        let mut right_buf = vec![];
 
         for i in 0..self.get_current_row_buf_length() {
-            let c = self.editor_lines[self.cursor_y as usize]
-                .buf
-                .chars()
-                .nth(i as usize)
-                .unwrap();
+            let c = self.editor_lines[self.cursor_y as usize].buf[i as usize];
             if i < self.cursor_x {
                 left_buf.push(c)
             } else {
@@ -286,15 +301,18 @@ impl Viewer {
                 new_el_vec.push(EditorLine {
                     buf: el.buf.clone(),
                     render: el.render.clone(),
+                    highlight: vec![],
                 })
             }
             new_el_vec.push(EditorLine {
                 buf: left_buf.clone(),
-                render: String::new(),
+                render: vec![],
+                highlight: vec![],
             });
             new_el_vec.push(EditorLine {
                 buf: right_buf.clone(),
-                render: String::new(),
+                render: vec![],
+                highlight: vec![],
             });
         } else {
             for (i, el) in self.editor_lines.iter().enumerate() {
@@ -302,7 +320,8 @@ impl Viewer {
                 if i == self.cursor_y as usize + 1 {
                     new_el_vec.push(EditorLine {
                         buf: right_buf.clone(),
-                        render: String::new(),
+                        render: vec![],
+                        highlight: vec![],
                     })
                 }
 
@@ -310,13 +329,15 @@ impl Viewer {
                 if i == self.cursor_y as usize {
                     new_el_vec.push(EditorLine {
                         buf: left_buf.clone(),
-                        render: String::new(),
+                        render: vec![],
+                        highlight: vec![],
                     })
                 // just  line
                 } else {
                     new_el_vec.push(EditorLine {
                         buf: el.buf.clone(),
-                        render: el.render.clone(),
+                        render: vec![],
+                        highlight: vec![],
                     })
                 }
             }
@@ -370,7 +391,11 @@ impl Viewer {
             Some(s) => match File::create(s) {
                 Ok(mut f) => {
                     for i in 0..self.get_editor_line_length() {
-                        let buf = &self.editor_lines[i as usize].buf;
+                        let buf = &self.editor_lines[i as usize]
+                            .buf
+                            .iter()
+                            .cloned()
+                            .collect::<String>();
                         f.write_all(buf.as_bytes()).unwrap();
                         f.write_all(b"\r\n").unwrap();
                     }
@@ -391,8 +416,8 @@ impl Viewer {
         let mut target_cursor_x: u16 = 0;
 
         let current_buf_row = &self.editor_lines[self.cursor_y as usize].buf;
-        for (_, c) in current_buf_row.chars().enumerate() {
-            if c == '\t' {
+        for (_, c) in current_buf_row.iter().enumerate() {
+            if *c == '\t' {
                 current_render_x = current_render_x + (KILL_TAB_STOP as u16 - 1)
                     - (current_render_x % KILL_TAB_STOP as u16)
             };
@@ -436,7 +461,7 @@ impl Viewer {
                 current_row = 0
             }
 
-            let row = &self.editor_lines[current_row as usize].render;
+            let row = &self.editor_lines[current_row as usize].render_string();
 
             if let Some(x) = row.find(&query) {
                 self.increment_find.last_mached_row = Some(current_row as i16);
@@ -516,8 +541,7 @@ impl Viewer {
         }
         let row = &self.editor_lines[self.cursor_y as usize];
         for i in 0..self.cursor_x {
-            dbg!(&self.cursor_x);
-            if row.buf.chars().nth(i as usize).unwrap() as char == '\t' {
+            if row.buf[i as usize] == '\t' {
                 render_x = render_x + (KILL_TAB_STOP as u16 - 1) - (render_x % KILL_TAB_STOP as u16)
             }
             render_x = render_x + 1;
@@ -589,23 +613,17 @@ impl Viewer {
     fn get_editor_buffer_length(&self) -> u16 {
         let mut sum = 0;
         for line in &self.editor_lines {
-            sum = sum + line.buf.as_bytes().len()
+            sum = line.buf.len() * std::mem::size_of::<char>();
         }
         sum as u16
     }
 
     fn get_current_row_buf_length(&self) -> u16 {
-        self.editor_lines[self.cursor_y as usize]
-            .buf
-            .chars()
-            .count() as u16
+        self.editor_lines[self.cursor_y as usize].buf.len() as u16
     }
 
     fn get_current_row_render_length(&self) -> u16 {
-        self.editor_lines[self.cursor_y as usize]
-            .render
-            .chars()
-            .count() as u16
+        self.editor_lines[self.cursor_y as usize].render.len() as u16
     }
 
     fn set_status_message(&mut self, status_massage: String) {
@@ -679,14 +697,14 @@ impl Viewer {
     fn editor_update_row(&mut self) {
         let mut new_vec = vec![];
         for (_, line) in self.editor_lines.iter().enumerate() {
-            let mut render = String::new(); // TODO: pushではなくて、メモリ確保して処理する
-            for c in line.buf.chars() {
-                if c == '\t' {
+            let mut render = vec![]; // TODO: pushではなくて、メモリ確保して処理する
+            for c in line.buf.iter() {
+                if *c == '\t' {
                     for _ in 0..KILL_TAB_STOP {
                         render.push(' ');
                     }
                 } else {
-                    render.push(c);
+                    render.push(c.clone());
                 }
             }
             new_vec.push(render);
@@ -694,6 +712,8 @@ impl Viewer {
         for i in 0..self.get_editor_line_length() {
             self.editor_lines[i as usize].render = new_vec[i as usize].clone();
         }
+
+        self.editor_update_syntax()
     }
 
     fn editor_draw_rows(&mut self) {
@@ -709,31 +729,37 @@ impl Viewer {
                     write!(self.stdout, "{}", line).unwrap();
                 }
             } else {
-                let mut len = self.editor_lines[file_row as usize].render.chars().count() as i16
-                    - self.column_offset as i16;
-                if len < 0 {
-                    len = 0
-                }
-
-                if len > self.window_size_col as i16 {
-                    len = self.window_size_col as i16
-                }
-                let whole_render_line = format!("{}", self.editor_lines[file_row as usize].render);
-
-                let mut line = String::new();
-                for (i, c) in whole_render_line.chars().enumerate() {
+                for (i, c) in self.editor_lines[file_row as usize]
+                    .render
+                    .iter()
+                    .enumerate()
+                {
+                    let mut current_color: EditorHighlight = EditorHighlight::Normal;
                     if i >= self.column_offset as usize
                         && i < (self.window_size_col + self.column_offset) as usize
                     {
-                        line.push(c);
+                        let peek_color = self.editor_lines[file_row as usize].highlight[i];
+                        if current_color != peek_color {
+                            current_color = peek_color;
+                            let ansi_value = current_color.editor_syntax_to_color();
+                            write!(
+                                self.stdout,
+                                "{}{}{}",
+                                style::Reset,
+                                color::Fg(ansi_value),
+                                c
+                            )
+                            .unwrap()
+                        } else {
+                            let ansi_value = current_color.editor_syntax_to_color();
+                            write!(self.stdout, "{}{}", color::Fg(ansi_value), c).unwrap()
+                        }
                     }
                 }
-
-                write!(self.stdout, "{}", line).unwrap();
             }
 
             if i < self.window_size_row {
-                write!(self.stdout, "\r\n").unwrap();
+                write!(self.stdout, "\r\n{}", style::Reset).unwrap();
             }
         }
     }
@@ -759,8 +785,24 @@ impl Viewer {
             self.column_offset = self.render_x - self.window_size_col + 1;
         }
     }
-
-    fn editor_update_syntax() {}
+    fn editor_update_syntax(&mut self) {
+        let mut highlight = vec![];
+        for e_l in &self.editor_lines {
+            let mut line = vec![];
+            for (i, c) in e_l.render.iter().enumerate() {
+                match c {
+                    '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => {
+                        line.push(EditorHighlight::Number)
+                    }
+                    _ => line.push(EditorHighlight::Normal),
+                }
+            }
+            highlight.push(line);
+        }
+        for i in 0..self.get_editor_line_length() {
+            self.editor_lines[i as usize].highlight = highlight[i as usize].clone();
+        }
+    }
 
     pub fn run_viwer() {
         let mut viewer = Viewer::new();
