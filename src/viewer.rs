@@ -45,6 +45,7 @@ impl IncrementFind {
 struct EditorSyntax {
     file_type: FileType,
     hilight_number: bool,
+    hilight_strings: bool,
 }
 
 enum FileType {
@@ -83,6 +84,7 @@ enum EditorHighlight {
     Normal,
     Number,
     Match,
+    String,
 }
 
 impl EditorHighlight {
@@ -91,6 +93,7 @@ impl EditorHighlight {
             EditorHighlight::Normal => color::AnsiValue(7), // White
             EditorHighlight::Number => color::AnsiValue(1), // Red
             EditorHighlight::Match => color::AnsiValue(4),  // Blue
+            EditorHighlight::String => color::AnsiValue(5), // Magenta
         }
     }
 }
@@ -126,6 +129,13 @@ impl Viewer {
     fn hilight_numbers(&self) -> bool {
         match &self.editor_syntax {
             Some(e_s) => return e_s.hilight_number,
+            None => return false,
+        }
+    }
+
+    fn hilight_strings(&self) -> bool {
+        match &self.editor_syntax {
+            Some(e_s) => return e_s.hilight_strings,
             None => return false,
         }
     }
@@ -175,6 +185,7 @@ impl Viewer {
                         self.editor_syntax = Some(EditorSyntax {
                             file_type: FileType::C,
                             hilight_number: true,
+                            hilight_strings: true,
                         })
                     }
                 }
@@ -879,13 +890,17 @@ impl Viewer {
             return;
         }
         let mut highlight = vec![];
+        let mut is_in_string: bool = false;
+        let mut in_string: char = '\0';
+
         for e_l in &self.editor_lines {
             let mut line = vec![];
             let mut preivious_hilight = EditorHighlight::Normal;
-            for (i, c) in e_l.render.iter().enumerate() {
+            for (mut i, c) in e_l.render.iter().enumerate() {
                 if i > 0 {
                     preivious_hilight = line[i - 1];
                 }
+
                 if self.hilight_numbers() {
                     if Self::is_digit(c)
                         || (*c == '.' && preivious_hilight == EditorHighlight::Number)
@@ -894,6 +909,32 @@ impl Viewer {
                         continue;
                     }
                 }
+
+                if self.hilight_strings() {
+                    if is_in_string {
+                        line.push(EditorHighlight::String);
+
+                        if i > 0
+                            && e_l.render[i as usize - 1] == '\\'
+                            && i < self.get_current_row_render_length() as usize
+                        {
+                            continue;
+                        }
+
+                        if *c == in_string {
+                            is_in_string = false;
+                        }
+                        continue;
+                    } else {
+                        if *c == '"' || *c == '\'' {
+                            is_in_string = true;
+                            in_string = *c;
+                            line.push(EditorHighlight::String);
+                            continue;
+                        }
+                    }
+                }
+
                 line.push(EditorHighlight::Normal);
             }
             highlight.push(line);
