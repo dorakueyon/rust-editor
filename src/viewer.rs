@@ -5,10 +5,14 @@ use termion::raw::IntoRawMode;
 use termion::*;
 
 use chrono::{DateTime, Duration, Utc};
+use std::ffi::OsStr;
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
+use std::path::Path;
+
+use std::fmt::{Display, Formatter, Result as FormatResult};
 
 use termion::screen::AlternateScreen;
 
@@ -38,6 +42,23 @@ impl IncrementFind {
     }
 }
 
+struct EditorSyntax {
+    file_type: FileType,
+    hilight_number: bool,
+}
+
+enum FileType {
+    C,
+}
+
+impl Display for FileType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FormatResult {
+        match self {
+            FileType::C => write!(f, "C"),
+        }
+    }
+}
+
 pub struct Viewer {
     stdout: AlternateScreen<termion::raw::RawTerminal<std::io::Stdout>>,
     cursor_x: u16,
@@ -49,6 +70,7 @@ pub struct Viewer {
     window_size_row: u16,
     editor_lines: Vec<EditorLine>,
     file_name: Option<String>,
+    editor_syntax: Option<EditorSyntax>,
     status_message: String,
     status_message_time: DateTime<Utc>,
     is_dirty: bool,
@@ -101,6 +123,13 @@ impl Viewer {
         (col, row)
     }
 
+    fn hilight_numbers(&self) -> bool {
+        match &self.editor_syntax {
+            Some(e_s) => return e_s.hilight_number,
+            None => return false,
+        }
+    }
+
     fn new() -> Self {
         let stdout = Viewer::enable_raw_mode();
         let (window_size_col, mut window_size_row) = Viewer::get_window_size();
@@ -127,11 +156,30 @@ impl Viewer {
             window_size_row,
             editor_lines: vec![],
             file_name: None,
+            editor_syntax: None,
             status_message,
             status_message_time,
             is_dirty,
             quit_times,
             increment_find: IncrementFind::new(),
+        }
+    }
+
+    fn editor_select_syntax_hilight(&mut self) {
+        match &self.file_name {
+            None => return,
+            Some(name) => match Path::new(name).extension() {
+                Some(s) => {
+                    let extention = OsStr::to_str(s).unwrap_or("undefined");
+                    if ["c", "h", "cpp"].contains(&extention) {
+                        self.editor_syntax = Some(EditorSyntax {
+                            file_type: FileType::C,
+                            hilight_number: true,
+                        })
+                    }
+                }
+                None => return,
+            },
         }
     }
 
@@ -161,6 +209,7 @@ impl Viewer {
         self.editor_lines = editor_lines;
 
         self.file_name = Some(String::from(file_name));
+        self.editor_select_syntax_hilight()
     }
 
     fn saturated_add_x(&mut self) {
@@ -388,6 +437,7 @@ impl Viewer {
 
     fn editor_save(&mut self) {
         // TODO: Save as ...
+        // TODO: editor_select_syntax_hilight after Save as ...
         match &self.file_name {
             None => return,
             Some(s) => match File::create(s) {
@@ -657,7 +707,16 @@ impl Viewer {
             self.get_editor_line_length(),
             if self.is_dirty { "(modified)" } else { "" }
         );
-        let right_status = format!("{}/{}", self.cursor_y + 1, self.get_editor_line_length());
+        let file_type = match &self.editor_syntax {
+            Some(s) => format!("{}", &s.file_type),
+            None => String::from("no ft"),
+        };
+        let right_status = format!(
+            "{} | {}/{}",
+            file_type,
+            self.cursor_y + 1,
+            self.get_editor_line_length()
+        );
         if status.chars().count() + right_status.chars().count() < self.window_size_col as usize {
             for _ in
                 status.chars().count()..self.window_size_col as usize - right_status.chars().count()
@@ -800,7 +859,25 @@ impl Viewer {
         }
     }
 
+    fn default_hilight(&mut self) {
+        let mut highlight = vec![];
+        for e_l in &self.editor_lines {
+            let mut line = vec![];
+            for _c in &e_l.render {
+                line.push(EditorHighlight::Normal);
+            }
+            highlight.push(line);
+        }
+        for i in 0..self.get_editor_line_length() {
+            self.editor_lines[i as usize].highlight = highlight[i as usize].clone();
+        }
+    }
+
     fn editor_update_syntax(&mut self) {
+        if self.editor_syntax.is_none() {
+            self.default_hilight();
+            return;
+        }
         let mut highlight = vec![];
         for e_l in &self.editor_lines {
             let mut line = vec![];
@@ -809,10 +886,13 @@ impl Viewer {
                 if i > 0 {
                     preivious_hilight = line[i - 1];
                 }
-                if Self::is_digit(c) || (*c == '.' && preivious_hilight == EditorHighlight::Number)
-                {
-                    line.push(EditorHighlight::Number);
-                    continue;
+                if self.hilight_numbers() {
+                    if Self::is_digit(c)
+                        || (*c == '.' && preivious_hilight == EditorHighlight::Number)
+                    {
+                        line.push(EditorHighlight::Number);
+                        continue;
+                    }
                 }
                 line.push(EditorHighlight::Normal);
             }
@@ -826,7 +906,7 @@ impl Viewer {
     pub fn run_viwer() {
         let mut viewer = Viewer::new();
 
-        let file_name = "./hello_world.txt";
+        let file_name = "./hello_world.cpp";
         viewer.set_status_message(String::from(
             "HELP: Ctr-S = save | Ctr-C = quit | Ctrl-F = find",
         ));
