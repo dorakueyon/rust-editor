@@ -44,6 +44,7 @@ impl IncrementFind {
 
 struct EditorSyntax {
     file_type: FileType,
+    singleline_comment_start: String,
     hilight_number: bool,
     hilight_strings: bool,
 }
@@ -85,6 +86,7 @@ enum EditorHighlight {
     Number,
     Match,
     String,
+    Comment,
 }
 
 impl EditorHighlight {
@@ -94,6 +96,7 @@ impl EditorHighlight {
             EditorHighlight::Number => color::AnsiValue(1), // Red
             EditorHighlight::Match => color::AnsiValue(4),  // Blue
             EditorHighlight::String => color::AnsiValue(5), // Magenta
+            EditorHighlight::Comment => color::AnsiValue(6), // Cyan
         }
     }
 }
@@ -184,6 +187,7 @@ impl Viewer {
                     if ["c", "h", "cpp"].contains(&extention) {
                         self.editor_syntax = Some(EditorSyntax {
                             file_type: FileType::C,
+                            singleline_comment_start: String::from("//"),
                             hilight_number: true,
                             hilight_strings: true,
                         })
@@ -884,6 +888,28 @@ impl Viewer {
         }
     }
 
+    fn single_comment_start_length(&self) -> usize {
+        match &self.editor_syntax {
+            Some(e_s) => return e_s.singleline_comment_start.chars().count(),
+            None => 0,
+        }
+    }
+
+    fn has_singleline_comment_started(&self, index: usize, render_row: &Vec<char>) -> bool {
+        let single_comment_start = match &self.editor_syntax {
+            Some(e_s) => e_s.singleline_comment_start.clone(),
+            None => String::from(""),
+        };
+        let mut s = String::new();
+        for (i, c) in render_row.iter().enumerate() {
+            if i >= index && i < index + self.single_comment_start_length() {
+                s.push(*c)
+            }
+        }
+
+        single_comment_start == s
+    }
+
     fn editor_update_syntax(&mut self) {
         if self.editor_syntax.is_none() {
             self.default_hilight();
@@ -893,12 +919,23 @@ impl Viewer {
         let mut is_in_string: bool = false;
         let mut in_string: char = '\0';
 
-        for e_l in &self.editor_lines {
+        for (column_index, e_l) in self.editor_lines.iter().enumerate() {
             let mut line = vec![];
             let mut preivious_hilight = EditorHighlight::Normal;
-            for (mut i, c) in e_l.render.iter().enumerate() {
-                if i > 0 {
-                    preivious_hilight = line[i - 1];
+            for (row_index, c) in e_l.render.iter().enumerate() {
+                if row_index > 0 {
+                    preivious_hilight = line[row_index - 1];
+                }
+
+                if !is_in_string {
+                    if self.has_singleline_comment_started(row_index, &e_l.render) {
+                        eprintln!("start syntax");
+                        // rest row commented out
+                        for _ in row_index..self.editor_lines[column_index].render.len() {
+                            line.push(EditorHighlight::Comment)
+                        }
+                        break;
+                    }
                 }
 
                 if self.hilight_numbers() {
@@ -914,9 +951,9 @@ impl Viewer {
                     if is_in_string {
                         line.push(EditorHighlight::String);
 
-                        if i > 0
-                            && e_l.render[i as usize - 1] == '\\'
-                            && i < self.get_current_row_render_length() as usize
+                        if row_index > 0
+                            && e_l.render[row_index as usize - 1] == '\\'
+                            && row_index < self.get_current_row_render_length() as usize
                         {
                             continue;
                         }
