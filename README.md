@@ -10,5 +10,5 @@ following step by step editor tutorial written by C, [killo](https://viewsourcec
 - [x] A text viewer
 - [x] A text editor
 - [x] Search
-- [ ] Syntax highlighting
-- [ ] Appendices
+- [x] Syntax highlighting
+- [x] Appendices
