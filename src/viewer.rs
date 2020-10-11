@@ -21,6 +21,15 @@ const KILL_TAB_STOP: u8 = 4;
 const STATUS_LINE_LENGTH: u16 = 2;
 const QUIT_TIMES: u8 = 1; // 1 for dev.
 
+const KEY_WORD_1: [&str; 15] = [
+    "switch", "if", "while", "for", "break", "continue", "return", "else", "struct", "union",
+    "typedef", "static", "enum", "class", "case",
+];
+
+const KEY_WORD_2: [&str; 8] = [
+    "int", "long", "double", "float", "char", "unsigned", "signed", "void",
+];
+
 #[derive(Debug)]
 pub enum IncrementFindDirection {
     Forward,
@@ -45,8 +54,8 @@ impl IncrementFind {
 struct EditorSyntax {
     file_type: FileType,
     singleline_comment_start: String,
-    hilight_number: bool,
-    hilight_strings: bool,
+    highlight_number: bool,
+    highlight_strings: bool,
 }
 
 enum FileType {
@@ -87,6 +96,8 @@ enum EditorHighlight {
     Match,
     String,
     Comment,
+    Keyword1,
+    Keyword2,
 }
 
 impl EditorHighlight {
@@ -97,6 +108,8 @@ impl EditorHighlight {
             EditorHighlight::Match => color::AnsiValue(4),  // Blue
             EditorHighlight::String => color::AnsiValue(5), // Magenta
             EditorHighlight::Comment => color::AnsiValue(6), // Cyan
+            EditorHighlight::Keyword1 => color::AnsiValue(2), // Green
+            EditorHighlight::Keyword2 => color::AnsiValue(3), // Yellow
         }
     }
 }
@@ -129,16 +142,16 @@ impl Viewer {
         (col, row)
     }
 
-    fn hilight_numbers(&self) -> bool {
+    fn highlight_numbers(&self) -> bool {
         match &self.editor_syntax {
-            Some(e_s) => return e_s.hilight_number,
+            Some(e_s) => return e_s.highlight_number,
             None => return false,
         }
     }
 
-    fn hilight_strings(&self) -> bool {
+    fn highlight_strings(&self) -> bool {
         match &self.editor_syntax {
-            Some(e_s) => return e_s.hilight_strings,
+            Some(e_s) => return e_s.highlight_strings,
             None => return false,
         }
     }
@@ -188,8 +201,8 @@ impl Viewer {
                         self.editor_syntax = Some(EditorSyntax {
                             file_type: FileType::C,
                             singleline_comment_start: String::from("//"),
-                            hilight_number: true,
-                            hilight_strings: true,
+                            highlight_number: true,
+                            highlight_strings: true,
                         })
                     }
                 }
@@ -910,74 +923,134 @@ impl Viewer {
         single_comment_start == s
     }
 
+    fn is_separator(c: &char) -> bool {
+        match c {
+            ' ' => true,  // space
+            '\0' => true, // null,
+            ',' | '.' | '(' | ')' | '+' | '-' | '/' | '*' | '=' | '~' | '%' | '<' | '>' | '['
+            | ']' | ';' => true, // separator chars
+            _ => false,
+        }
+    }
+
+    fn get_word(&self, row: &str, start_index: usize) -> String {
+        let mut s = String::new();
+        for (i, c) in row.chars().enumerate() {
+            if i < start_index {
+                continue;
+            }
+
+            if Viewer::is_separator(&c) {
+                break;
+            };
+
+            s.push(c);
+        }
+
+        s
+    }
+
     fn editor_update_syntax(&mut self) {
         if self.editor_syntax.is_none() {
             self.default_hilight();
             return;
         }
-        let mut highlight = vec![];
+        let previous_separator = true;
+        let mut highlight_matrix = vec![];
         let mut is_in_string: bool = false;
         let mut in_string: char = '\0';
 
         for (column_index, e_l) in self.editor_lines.iter().enumerate() {
-            let mut line = vec![];
-            let mut preivious_hilight = EditorHighlight::Normal;
-            for (row_index, c) in e_l.render.iter().enumerate() {
+            let mut highlight = vec![EditorHighlight::Normal; e_l.render.len()];
+            let row = &e_l.render;
+            let mut row_index = 0;
+            let mut preivious_highlight = EditorHighlight::Normal;
+
+            while row_index < e_l.render.len() {
+                let c = &row[row_index];
+
                 if row_index > 0 {
-                    preivious_hilight = line[row_index - 1];
+                    preivious_highlight = highlight[row_index - 1];
                 }
 
+                // higlight single comment
                 if !is_in_string {
                     if self.has_singleline_comment_started(row_index, &e_l.render) {
-                        eprintln!("start syntax");
-                        // rest row commented out
-                        for _ in row_index..self.editor_lines[column_index].render.len() {
-                            line.push(EditorHighlight::Comment)
+                        while row_index < e_l.render.len() {
+                            highlight[row_index] = EditorHighlight::Comment;
+                            row_index = row_index + 1
                         }
                         break;
                     }
                 }
 
-                if self.hilight_numbers() {
+                // higlight number
+                if self.highlight_numbers() {
                     if Self::is_digit(c)
-                        || (*c == '.' && preivious_hilight == EditorHighlight::Number)
+                        || (*c == '.' && preivious_highlight == EditorHighlight::Number)
                     {
-                        line.push(EditorHighlight::Number);
+                        highlight[row_index] = EditorHighlight::Number;
+                        row_index = row_index + 1;
                         continue;
                     }
                 }
 
-                if self.hilight_strings() {
+                // highlight strings
+                if self.highlight_strings() {
                     if is_in_string {
-                        line.push(EditorHighlight::String);
+                        highlight[row_index] = EditorHighlight::String;
 
                         if row_index > 0
                             && e_l.render[row_index as usize - 1] == '\\'
                             && row_index < self.get_current_row_render_length() as usize
                         {
+                            row_index = row_index + 1;
                             continue;
                         }
 
                         if *c == in_string {
                             is_in_string = false;
                         }
+                        row_index = row_index + 1;
                         continue;
                     } else {
                         if *c == '"' || *c == '\'' {
                             is_in_string = true;
                             in_string = *c;
-                            line.push(EditorHighlight::String);
+                            highlight[row_index] = EditorHighlight::String;
+
+                            row_index = row_index + 1;
                             continue;
                         }
                     }
                 }
+                // hilight keywords
+                if previous_separator {
+                    let row = &self.editor_lines[column_index].render_string();
+                    let word = &*self.get_word(row, row_index);
+                    if KEY_WORD_1.contains(&word) {
+                        for _ in 0..word.chars().count() {
+                            highlight[row_index] = EditorHighlight::Keyword1;
+                            row_index = row_index + 1;
+                        }
+                        continue;
+                    }
 
-                line.push(EditorHighlight::Normal);
+                    if KEY_WORD_2.contains(&word) {
+                        for _ in 0..word.chars().count() {
+                            highlight[row_index] = EditorHighlight::Keyword2;
+                            row_index = row_index + 1;
+                        }
+                        continue;
+                    }
+                }
+                row_index = row_index + 1;
             }
-            highlight.push(line);
+
+            highlight_matrix.push(highlight);
         }
         for i in 0..self.get_editor_line_length() {
-            self.editor_lines[i as usize].highlight = highlight[i as usize].clone();
+            self.editor_lines[i as usize].highlight = highlight_matrix[i as usize].clone();
         }
     }
 
