@@ -54,6 +54,8 @@ impl IncrementFind {
 struct EditorSyntax {
     file_type: FileType,
     singleline_comment_start: String,
+    multiline_comment_start: String,
+    multiline_comment_end: String,
     highlight_number: bool,
     highlight_strings: bool,
 }
@@ -96,6 +98,7 @@ enum EditorHighlight {
     Match,
     String,
     Comment,
+    MultiComment,
     Keyword1,
     Keyword2,
 }
@@ -108,6 +111,7 @@ impl EditorHighlight {
             EditorHighlight::Match => color::AnsiValue(4),  // Blue
             EditorHighlight::String => color::AnsiValue(5), // Magenta
             EditorHighlight::Comment => color::AnsiValue(6), // Cyan
+            EditorHighlight::MultiComment => color::AnsiValue(6), // Cyan
             EditorHighlight::Keyword1 => color::AnsiValue(2), // Green
             EditorHighlight::Keyword2 => color::AnsiValue(3), // Yellow
         }
@@ -152,6 +156,13 @@ impl Viewer {
     fn highlight_strings(&self) -> bool {
         match &self.editor_syntax {
             Some(e_s) => return e_s.highlight_strings,
+            None => return false,
+        }
+    }
+
+    fn highlight_multi_comment(&self) -> bool {
+        match &self.editor_syntax {
+            Some(e_s) => return !e_s.multiline_comment_start.is_empty(),
             None => return false,
         }
     }
@@ -201,6 +212,8 @@ impl Viewer {
                         self.editor_syntax = Some(EditorSyntax {
                             file_type: FileType::C,
                             singleline_comment_start: String::from("//"),
+                            multiline_comment_start: String::from("/*"),
+                            multiline_comment_end: String::from("*/"),
                             highlight_number: true,
                             highlight_strings: true,
                         })
@@ -950,6 +963,43 @@ impl Viewer {
         s
     }
 
+    fn multi_comment_start(&self) -> String {
+        match &self.editor_syntax {
+            Some(e_s) => return e_s.multiline_comment_start.clone(),
+            None => return String::new(),
+        }
+    }
+    fn multi_comment_end(&self) -> String {
+        match &self.editor_syntax {
+            Some(e_s) => return e_s.multiline_comment_end.clone(),
+            None => return String::new(),
+        }
+    }
+
+    fn multi_comment_end_len(&self) -> u16 {
+        match &self.editor_syntax {
+            Some(e_s) => return e_s.multiline_comment_end.chars().count() as u16,
+            None => return 0,
+        }
+    }
+
+    fn multi_comment_start_len(&self) -> u16 {
+        match &self.editor_syntax {
+            Some(e_s) => return e_s.multiline_comment_start.chars().count() as u16,
+            None => return 0,
+        }
+    }
+
+    fn str_compare(&self, row: &Vec<char>, start_index: usize, keyword: &String) -> bool {
+        let mut s = String::new();
+        for (i, c) in row.iter().enumerate() {
+            if i >= start_index && i < start_index + keyword.chars().count() {
+                s.push(*c)
+            }
+        }
+        keyword == &s
+    }
+
     fn editor_update_syntax(&mut self) {
         if self.editor_syntax.is_none() {
             self.default_hilight();
@@ -959,6 +1009,7 @@ impl Viewer {
         let mut highlight_matrix = vec![];
         let mut is_in_string: bool = false;
         let mut in_string: char = '\0';
+        let mut is_in_comment: bool = false;
 
         for (column_index, e_l) in self.editor_lines.iter().enumerate() {
             let mut highlight = vec![EditorHighlight::Normal; e_l.render.len()];
@@ -974,13 +1025,39 @@ impl Viewer {
                 }
 
                 // higlight single comment
-                if !is_in_string {
+                if !is_in_string && !is_in_comment {
                     if self.has_singleline_comment_started(row_index, &e_l.render) {
                         while row_index < e_l.render.len() {
                             highlight[row_index] = EditorHighlight::Comment;
                             row_index = row_index + 1
                         }
                         break;
+                    }
+                }
+
+                // higlight mult comment
+                if self.highlight_multi_comment() && !is_in_string {
+                    if is_in_comment {
+                        highlight[row_index] = EditorHighlight::MultiComment;
+
+                        if self.str_compare(&row, row_index, &self.multi_comment_end()) {
+                            is_in_comment = false;
+                            for _ in 0..self.multi_comment_end_len() {
+                                highlight[row_index] = EditorHighlight::MultiComment;
+                                row_index = row_index + 1;
+                            }
+                            continue;
+                        } else {
+                            row_index = row_index + 1;
+                            continue;
+                        }
+                    } else if self.str_compare(&row, row_index, &self.multi_comment_start()) {
+                        for _ in 0..self.multi_comment_start_len() {
+                            highlight[row_index] = EditorHighlight::MultiComment;
+                            row_index = row_index + 1;
+                        }
+                        is_in_comment = true;
+                        continue;
                     }
                 }
 
