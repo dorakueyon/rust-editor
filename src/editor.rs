@@ -75,7 +75,6 @@ impl Display for FileType {
 }
 
 pub struct Editor {
-    stdout: AlternateScreen<termion::raw::RawTerminal<std::io::Stdout>>,
     cursor_x: u16,
     render_x: u16,
     cursor_y: u16,
@@ -127,7 +126,6 @@ impl Editor {
     }
 
     fn new() -> Self {
-        let stdout = Editor::enable_raw_mode();
         let (window_size_col, mut window_size_row) = Editor::get_window_size();
 
         window_size_row = window_size_row - STATUS_LINE_LENGTH;
@@ -142,7 +140,6 @@ impl Editor {
         let quit_times = QUIT_TIMES;
 
         Self {
-            stdout,
             cursor_x,
             cursor_y,
             render_x,
@@ -589,8 +586,8 @@ impl Editor {
 
     fn editor_refresh_screen(&mut self) {
         self.editor_scroll();
-        write!(self.stdout, "{}", clear::All).unwrap();
-        write!(self.stdout, "{}", cursor::Goto(1, 1)).unwrap();
+        print!( "{}", clear::All);
+        print!( "{}", cursor::Goto(1, 1));
 
         self.editor_draw_rows();
         self.editor_draw_status_bar();
@@ -606,18 +603,15 @@ impl Editor {
             self.get_current_row_render_length(),
             self.document.rows.len()
         );
-        write!(
-            self.stdout,
+        print!(
             "{}{}",
             cursor::BlinkingBar,
             cursor::Goto(
                 self.render_x + 1 - self.column_offset,
                 self.cursor_y + 1 - self.row_offset
             ),
-        )
-        .unwrap();
-
-        self.stdout.flush().unwrap();
+        );
+        std::io::stdout().flush();
     }
 
     fn get_welcome_line(&mut self) -> String {
@@ -706,16 +700,14 @@ impl Editor {
         }
         let status_line = format!("{}{}", status, right_status);
 
-        write!(
-            self.stdout,
+        print!(
             "{}{}{}{}",
             color::Bg(color::LightMagenta),
             color::Fg(color::Black),
             status_line,
             style::Reset
-        )
-        .unwrap();
-        write!(self.stdout, "\r\n").unwrap();
+        );
+        print!( "\r\n");
     }
 
     fn editor_draw_message_bar(&mut self) {
@@ -729,15 +721,13 @@ impl Editor {
             }
         }
 
-        write!(
-            self.stdout,
+        print!(
             "{}{}{}{}",
             color::Bg(color::LightMagenta),
             color::Fg(color::Black),
             message_line,
             style::Reset
         )
-        .unwrap();
     }
 
     fn editor_update_row(&mut self) {
@@ -769,10 +759,10 @@ impl Editor {
             if file_row >= self.get_editor_line_length() {
                 if self.get_editor_line_length() == 0 && i == (self.window_size_row / 3) {
                     let welcome_line = self.get_welcome_line();
-                    write!(self.stdout, "{}", welcome_line).unwrap();
+                    print!( "{}", welcome_line);
                 } else {
                     let line = format!("~ ");
-                    write!(self.stdout, "{}", line).unwrap();
+                    print!( "{}", line);
                 }
             } else {
                 for (i, c) in self.document.rows[file_row as usize]
@@ -788,24 +778,22 @@ impl Editor {
                         if current_color != peek_color {
                             current_color = peek_color;
                             let ansi_value = current_color.editor_syntax_to_color();
-                            write!(
-                                self.stdout,
+                            print!(
                                 "{}{}{}",
                                 style::Reset,
                                 color::Fg(ansi_value),
                                 c
                             )
-                            .unwrap()
                         } else {
                             let ansi_value = current_color.editor_syntax_to_color();
-                            write!(self.stdout, "{}{}", color::Fg(ansi_value), c).unwrap()
+                            print!( "{}{}", color::Fg(ansi_value), c);
                         }
                     }
                 }
             }
 
             if i < self.window_size_row {
-                write!(self.stdout, "\r\n{}", style::Reset).unwrap();
+                print!( "\r\n{}", style::Reset);
             }
         }
     }
@@ -1071,6 +1059,7 @@ impl Editor {
     }
 
     pub fn run() {
+        let _stdout = AlternateScreen::from(stdout().into_raw_mode().unwrap());
         let mut editor = Editor::new();
 
         let file_name = "./hello_world.cpp";
@@ -1083,6 +1072,6 @@ impl Editor {
 
         editor.editor_process_key_press();
 
-        write!(editor.stdout, "{}", termion::cursor::Show).unwrap();
+        print!( "{}", termion::cursor::Show)
     }
 }
