@@ -1,26 +1,21 @@
 use crate::Document;
-use crate::Row;
 use crate::Highlight;
-
-use std::io::{stdin, stdout, Write};
-use termion::event::Key;
-use termion::input::TermRead;
-use termion::raw::IntoRawMode;
-use termion::*;
+use crate::Row;
+use crate::Terminal;
 
 use chrono::{DateTime, Duration, Utc};
 use std::ffi::OsStr;
 use std::fmt::Debug;
 use std::fs::File;
+use std::io::{stdin, stdout, Write};
 use std::path::Path;
+use termion::event::Key;
+use termion::*;
 
 use std::fmt::{Display, Formatter, Result as FormatResult};
 
-use termion::screen::AlternateScreen;
-
 const KILO_VERSION: &str = "1.0";
 const KILL_TAB_STOP: u8 = 4;
-const STATUS_LINE_LENGTH: u16 = 2;
 const QUIT_TIMES: u8 = 1; // 1 for dev.
 
 const KEY_WORD_1: [&str; 15] = [
@@ -74,14 +69,22 @@ impl Display for FileType {
     }
 }
 
+fn die(e: std::io::Error) {
+    println!("{}", termion::clear::All);
+    panic!(e)
+}
+
+pub struct Position {
+    pub x: usize,
+    pub render_x: usize,
+    pub y: usize,
+}
+
 pub struct Editor {
-    cursor_x: u16,
-    render_x: u16,
-    cursor_y: u16,
-    row_offset: u16,
-    column_offset: u16,
-    window_size_col: u16,
-    window_size_row: u16,
+    terminal: Terminal,
+    position: Position,
+    row_offset: usize,
+    column_offset: usize,
     document: Document,
     file_name: Option<String>,
     editor_syntax: Option<EditorSyntax>,
@@ -89,21 +92,11 @@ pub struct Editor {
     status_message_time: DateTime<Utc>,
     is_dirty: bool,
     quit_times: u8,
+    should_quit: bool,
     increment_find: IncrementFind,
 }
 
-
 impl Editor {
-    fn enable_raw_mode() -> AlternateScreen<termion::raw::RawTerminal<std::io::Stdout>> {
-        let stdout = AlternateScreen::from(stdout().into_raw_mode().unwrap());
-        stdout
-    }
-
-    fn get_window_size() -> (u16, u16) {
-        let (col, row) = termion::terminal_size().unwrap();
-        (col, row)
-    }
-
     fn highlight_numbers(&self) -> bool {
         match &self.editor_syntax {
             Some(e_s) => return e_s.highlight_number,
@@ -126,11 +119,8 @@ impl Editor {
     }
 
     fn new() -> Self {
-        let (window_size_col, mut window_size_row) = Editor::get_window_size();
-
-        window_size_row = window_size_row - STATUS_LINE_LENGTH;
-        let cursor_x = 0;
-        let cursor_y = 0;
+        let x = 0;
+        let y = 0;
         let render_x = 0;
         let row_offset = 0;
         let column_offset = 0;
@@ -138,15 +128,13 @@ impl Editor {
         let status_message_time = Utc::now();
         let is_dirty = false;
         let quit_times = QUIT_TIMES;
+        let should_quit = false;
 
         Self {
-            cursor_x,
-            cursor_y,
-            render_x,
+            position: Position { x, render_x, y },
             row_offset,
             column_offset,
-            window_size_col,
-            window_size_row,
+            terminal: Terminal::default(),
             document: Document::default(),
             file_name: None,
             editor_syntax: None,
@@ -154,6 +142,7 @@ impl Editor {
             status_message_time,
             is_dirty,
             quit_times,
+            should_quit,
             increment_find: IncrementFind::new(),
         }
     }
@@ -181,72 +170,71 @@ impl Editor {
     }
 
     fn editor_open(&mut self, file_name: &str) {
-       
         let document = Document::open(&file_name);
-        self.document= document;
+        self.document = document;
 
         self.file_name = Some(String::from(file_name));
         self.editor_select_syntax_hilight()
     }
 
     fn saturated_add_x(&mut self) {
-        if self.cursor_x < self.get_current_row_buf_length() {
-            self.cursor_x = self.cursor_x + 1;
+        if self.position.x < self.get_current_row_buf_length() {
+            self.position.x = self.position.x + 1;
         } else {
-            if self.cursor_y + 1 < self.get_editor_line_length() {
+            if self.position.y + 1 < self.get_editor_line_length() {
                 self.saturated_add_y();
-                self.cursor_x = 0;
+                self.position.x = 0;
             }
         }
     }
 
     fn saturated_substract_x(&mut self) {
-        if 0 < self.cursor_x {
-            self.cursor_x = self.cursor_x - 1;
+        if 0 < self.position.x {
+            self.position.x = self.position.x - 1;
         } else {
-            if 0 < self.cursor_y {
+            if 0 < self.position.y {
                 self.saturated_substract_y();
-                self.cursor_x = self.get_current_row_buf_length();
+                self.position.x = self.get_current_row_buf_length();
             }
         }
     }
 
     fn saturated_add_y(&mut self) {
-        if self.cursor_y + 1 < self.get_editor_line_length() {
-            self.cursor_y = self.cursor_y + 1;
-            if (self.cursor_x) > self.get_current_row_buf_length() {
-                self.cursor_x = self.get_current_row_buf_length()
+        if self.position.y + 1 < self.get_editor_line_length() {
+            self.position.y = self.position.y + 1;
+            if (self.position.x) > self.get_current_row_buf_length() {
+                self.position.x = self.get_current_row_buf_length()
             }
         }
     }
 
     fn saturated_substract_y(&mut self) {
-        if 0 < self.cursor_y {
-            self.cursor_y = self.cursor_y - 1;
-            if (self.cursor_x) > self.get_current_row_buf_length() {
-                self.cursor_x = self.get_current_row_buf_length()
+        if 0 < self.position.y {
+            self.position.y = self.position.y - 1;
+            if (self.position.x) > self.get_current_row_buf_length() {
+                self.position.x = self.get_current_row_buf_length()
             }
         }
     }
 
     fn editor_row_insert_char(&mut self, c: char) {
         let mut new_buf = vec![];
-        if self.cursor_x == self.get_current_row_buf_length() {
-            new_buf = self.document.rows[self.cursor_y as usize].buf.clone();
+        if self.position.x == self.get_current_row_buf_length() {
+            new_buf = self.document.rows[self.position.y as usize].buf.clone();
             new_buf.push(c);
         } else {
-            for (i, c_existed) in self.document.rows[self.cursor_y as usize]
+            for (i, c_existed) in self.document.rows[self.position.y as usize]
                 .buf
                 .iter()
                 .enumerate()
             {
-                if i == self.cursor_x as usize {
+                if i == self.position.x as usize {
                     new_buf.push(c)
                 }
                 new_buf.push(c_existed.clone())
             }
         }
-        self.document.rows[self.cursor_y as usize].buf = new_buf;
+        self.document.rows[self.position.y as usize].buf = new_buf;
         self.saturated_add_x();
         self.is_dirty = true;
     }
@@ -257,24 +245,24 @@ impl Editor {
 
     fn editor_row_delete_character(&mut self) {
         let mut new_buf = vec![];
-        for (i, c) in self.document.rows[self.cursor_y as usize]
+        for (i, c) in self.document.rows[self.position.y as usize]
             .buf
             .iter()
             .enumerate()
         {
-            if i == self.cursor_x as usize - 1 {
+            if i == self.position.x as usize - 1 {
                 continue;
             }
             new_buf.push(c.clone())
         }
 
-        self.document.rows[self.cursor_y as usize].buf = new_buf;
+        self.document.rows[self.position.y as usize].buf = new_buf;
 
         self.is_dirty = true
     }
 
     fn editor_delete_row(&mut self) {
-        self.document.rows.remove(self.cursor_y as usize);
+        self.document.rows.remove(self.position.y as usize);
     }
 
     fn editor_row_append_string(&mut self, append_from_row_index: usize) {
@@ -289,19 +277,19 @@ impl Editor {
     }
 
     fn editor_delete_char(&mut self) {
-        if self.cursor_x == 0 && self.cursor_y == 0 {
+        if self.position.x == 0 && self.position.y == 0 {
             return;
         }
 
-        if self.cursor_x > 0 {
+        if self.position.x > 0 {
             self.editor_row_delete_character();
-            self.cursor_x = self.cursor_x - 1;
+            self.position.x = self.position.x - 1;
         } else {
-            self.cursor_x = self.document.rows[self.cursor_y as usize - 1].buf.len() as u16;
+            self.position.x = self.document.rows[self.position.y as usize - 1].buf.len();
 
-            self.editor_row_append_string(self.cursor_y as usize);
+            self.editor_row_append_string(self.position.y as usize);
             self.editor_delete_row();
-            self.cursor_y = self.cursor_y - 1;
+            self.position.y = self.position.y - 1;
         }
     }
 
@@ -310,8 +298,8 @@ impl Editor {
         let mut right_buf = vec![];
 
         for i in 0..self.get_current_row_buf_length() {
-            let c = self.document.rows[self.cursor_y as usize].buf[i as usize];
-            if i < self.cursor_x {
+            let c = self.document.rows[self.position.y as usize].buf[i as usize];
+            if i < self.position.x {
                 left_buf.push(c)
             } else {
                 right_buf.push(c)
@@ -323,21 +311,21 @@ impl Editor {
     fn editor_insert_new_line(&mut self) {
         let mut new_el_vec = vec![];
         let (left_buf, right_buf) = self.split_line_resulted_from_enter_pressed();
-        if self.cursor_y == self.get_editor_line_length() - 1 {
+        if self.position.y == self.get_editor_line_length() - 1 {
             for i in 0..self.get_editor_line_length() - 1 {
                 let el = &self.document.rows[i as usize];
-                new_el_vec.push(Row{
+                new_el_vec.push(Row {
                     buf: el.buf.clone(),
                     render: el.render.clone(),
                     highlight: vec![],
                 })
             }
-            new_el_vec.push(Row{
+            new_el_vec.push(Row {
                 buf: left_buf.clone(),
                 render: vec![],
                 highlight: vec![],
             });
-            new_el_vec.push(Row{
+            new_el_vec.push(Row {
                 buf: right_buf.clone(),
                 render: vec![],
                 highlight: vec![],
@@ -345,8 +333,8 @@ impl Editor {
         } else {
             for (i, el) in self.document.rows.iter().enumerate() {
                 // new line
-                if i == self.cursor_y as usize + 1 {
-                    new_el_vec.push(Row{
+                if i == self.position.y as usize + 1 {
+                    new_el_vec.push(Row {
                         buf: right_buf.clone(),
                         render: vec![],
                         highlight: vec![],
@@ -354,15 +342,15 @@ impl Editor {
                 }
 
                 // splited line
-                if i == self.cursor_y as usize {
-                    new_el_vec.push(Row{
+                if i == self.position.y as usize {
+                    new_el_vec.push(Row {
                         buf: left_buf.clone(),
                         render: vec![],
                         highlight: vec![],
                     })
                 // just  line
                 } else {
-                    new_el_vec.push(Row{
+                    new_el_vec.push(Row {
                         buf: el.buf.clone(),
                         render: vec![],
                         highlight: vec![],
@@ -372,7 +360,7 @@ impl Editor {
         }
         self.document.rows = new_el_vec;
         self.saturated_add_y();
-        self.cursor_x = 0
+        self.position.x = 0
     }
 
     fn editor_prompt<F>(&mut self, prompt: String, mut incremental_callback: F) -> String
@@ -383,7 +371,8 @@ impl Editor {
         self.set_status_message(format!("{}{}", prompt, input));
         self.editor_refresh_screen();
 
-        for r in stdin().keys() {
+        loop {
+            let r = Terminal::read_key();
             match &r {
                 Ok(Key::Esc) => {
                     self.set_status_message(String::new());
@@ -440,15 +429,15 @@ impl Editor {
         }
     }
 
-    fn editor_row_rx2cx(&mut self, render_x: u16) -> u16 {
-        let mut current_render_x: u16 = 0;
-        let mut target_cursor_x: u16 = 0;
+    fn editor_row_rx2cx(&mut self, render_x: usize) -> usize {
+        let mut current_render_x = 0;
+        let mut target_cursor_x = 0;
 
-        let current_buf_row = &self.document.rows[self.cursor_y as usize].buf;
+        let current_buf_row = &self.document.rows[self.position.y as usize].buf;
         for (_, c) in current_buf_row.iter().enumerate() {
             if *c == '\t' {
-                current_render_x = current_render_x + (KILL_TAB_STOP as u16 - 1)
-                    - (current_render_x % KILL_TAB_STOP as u16)
+                current_render_x = current_render_x + (KILL_TAB_STOP as usize - 1)
+                    - (current_render_x % KILL_TAB_STOP as usize)
             };
             current_render_x = current_render_x + 1;
             target_cursor_x = target_cursor_x + 1;
@@ -493,13 +482,12 @@ impl Editor {
             let row = &self.document.rows[current_row as usize].render_string();
 
             if let Some(x) = row.find(&query) {
-                self.increment_find.last_mached_row = Some(current_row as i16);
-                self.cursor_y = current_row as u16;
-                self.cursor_x = self.editor_row_rx2cx(x as u16);
+                self.increment_find.last_mached_row = Some(current_row);
+                self.position.y = current_row as usize;
+                self.position.x = self.editor_row_rx2cx(x);
 
                 for i in 0..query.chars().count() {
-                    self.document.rows[current_row as usize].highlight[x + i] =
-                        Highlight::Match
+                    self.document.rows[current_row as usize].highlight[x + i] = Highlight::Match
                 }
                 break;
             }
@@ -507,76 +495,84 @@ impl Editor {
     }
 
     fn editor_find(&mut self) {
-        let saved_cursor_x = self.cursor_x;
-        let saved_cursor_y = self.cursor_y;
+        let saved_cursor_x = self.position.x;
+        let saved_cursor_y = self.position.y;
         let saved_column_offset = self.column_offset;
         let saved_row_offset = self.row_offset;
 
         let query = self.editor_prompt(String::from("Search:"), Self::on_incremental_find);
         if query.is_empty() {
-            self.cursor_x = saved_cursor_x;
-            self.cursor_y = saved_cursor_y;
+            self.position.x = saved_cursor_x;
+            self.position.y = saved_cursor_y;
             self.column_offset = saved_column_offset;
             self.row_offset = saved_row_offset;
         }
     }
 
-    fn editor_process_key_press(&mut self) {
-        for c in stdin().keys() {
-            //dbg!(&c);
-            dbg!(&self.document.rows[self.cursor_y as usize]);
-            match c {
-                Ok(event::Key::Ctrl('c')) | Ok(event::Key::Ctrl('q')) => {
-                    if self.is_dirty && self.quit_times > 0 {
-                        // TODO 他の作業をしたらquit_timesが回復するように
-                        self.set_status_message(format!(
-                        "WARNING!!! File has unsaved changes. Press Ctr-Q|C {} more times to quit",
-                        self.quit_times
-                    ));
-                        self.quit_times = self.quit_times - 1;
-                    } else {
-                        break;
-                    }
-                }
-                Ok(event::Key::Backspace) | Ok(event::Key::Ctrl('h')) | Ok(event::Key::Delete) => {
-                    self.editor_delete_char();
-                }
-                Ok(event::Key::Ctrl('s')) => self.editor_save(),
-                Ok(event::Key::Ctrl('f')) => self.editor_find(),
-                Ok(event::Key::Left) => {
-                    self.saturated_substract_x();
-                }
-                Ok(event::Key::Right) => {
-                    self.saturated_add_x();
-                }
-                Ok(event::Key::Up) => {
-                    self.saturated_substract_y();
-                }
-                Ok(event::Key::Down) => {
-                    self.saturated_add_y();
-                }
-                Ok(event::Key::Char(c)) => {
-                    if c == '\n' {
-                        self.editor_insert_new_line()
-                    } else {
-                        self.editor_insert_char(c)
-                    }
-                }
-                _ => {}
+    fn process_keypress(&mut self) -> Result<(), std::io::Error> {
+        let pressed_key = Terminal::read_key()?;
+        dbg!(&pressed_key);
+        match pressed_key {
+            event::Key::Ctrl('c') | event::Key::Ctrl('q') => {
+                //if self.is_dirty && self.quit_times > 0 {
+                //    // TODO 他の作業をしたらquit_timesが回復するように
+                //    self.set_status_message(format!(
+                //    "WARNING!!! File has unsaved changes. Press Ctr-Q|C {} more times to quit",
+                //    self.quit_times
+                //));
+                //    self.quit_times = self.quit_times - 1;
+                //} else {
+                self.should_quit = true;
+                //}
             }
-            self.editor_refresh_screen()
+            event::Key::Backspace | event::Key::Ctrl('h') | event::Key::Delete => {
+                self.editor_delete_char();
+            }
+            event::Key::Ctrl('s') => self.editor_save(),
+            event::Key::Ctrl('f') => self.editor_find(),
+            event::Key::Left | event::Key::Right | event::Key::Up | event::Key::Down => {
+                self.move_cursor(pressed_key)
+            }
+            event::Key::Char(c) => {
+                if c == '\n' {
+                    self.editor_insert_new_line()
+                } else {
+                    self.editor_insert_char(c)
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn move_cursor(&mut self, key: Key) {
+        match key {
+            Key::Left => {
+                self.saturated_substract_x();
+            }
+            Key::Right => {
+                self.saturated_add_x();
+            }
+            Key::Up => {
+                self.saturated_substract_y();
+            }
+            Key::Down => {
+                self.saturated_add_y();
+            }
+            _ => {}
         }
     }
 
-    fn editor_row_cx2rx(&mut self) -> u16 {
+    fn editor_row_cx2rx(&mut self) -> usize {
         let mut render_x = 0;
-        if self.cursor_x == 0 {
+        if self.position.x == 0 {
             return render_x;
         }
-        let row = &self.document.rows[self.cursor_y as usize];
-        for i in 0..self.cursor_x {
+        let row = &self.document.rows[self.position.y as usize];
+        for i in 0..self.position.x {
             if row.buf[i as usize] == '\t' {
-                render_x = render_x + (KILL_TAB_STOP as u16 - 1) - (render_x % KILL_TAB_STOP as u16)
+                render_x =
+                    render_x + (KILL_TAB_STOP as usize - 1) - (render_x % KILL_TAB_STOP as usize)
             }
             render_x = render_x + 1;
         }
@@ -584,10 +580,15 @@ impl Editor {
         render_x
     }
 
-    fn editor_refresh_screen(&mut self) {
+    fn editor_refresh_screen(&mut self) -> Result<(), std::io::Error> {
         self.editor_scroll();
-        print!( "{}", clear::All);
-        print!( "{}", cursor::Goto(1, 1));
+        Terminal::cursor_hide();
+        Terminal::clear_screen();
+        Terminal::cursor_position(&Position {
+            x: 0,
+            y: 0,
+            render_x: 0,
+        });
 
         self.editor_draw_rows();
         self.editor_draw_status_bar();
@@ -595,50 +596,40 @@ impl Editor {
 
         eprintln!(
             "cursor goto {}: {} (cursor_x: {}). row_offset: {}.  current_row_buf_length: {},current_row_render_length:{}, editor_line: {}",
-            self.render_x,
-            self.cursor_y,
-            self.cursor_x,
+            self.position.render_x,
+            self.position.y,
+            self.position.x,
             self.row_offset,
             self.get_current_row_buf_length(),
             self.get_current_row_render_length(),
             self.document.rows.len()
         );
-        print!(
-            "{}{}",
-            cursor::BlinkingBar,
-            cursor::Goto(
-                self.render_x + 1 - self.column_offset,
-                self.cursor_y + 1 - self.row_offset
-            ),
-        );
-        std::io::stdout().flush();
+
+        Terminal::cursor_position(&self.position);
+
+        if self.should_quit {
+            Terminal::clear_screen();
+            println!("Good bye!!.\r")
+        }
+        Terminal::cursor_show();
+        Terminal::flush()
     }
 
     fn get_welcome_line(&mut self) -> String {
-        let welcom_message = format!("igc editor -- version {}", KILO_VERSION);
-        let mut welcom_len = welcom_message.chars().count() as u16;
-        if welcom_len > self.window_size_col {
-            welcom_len = self.window_size_col;
-        }
+        let mut welcom_message = format!("igc editor -- version {}", KILO_VERSION);
+        let width = std::cmp::min(
+            self.terminal.window_size_width as usize,
+            welcom_message.len(),
+        );
 
-        let mut welcome_line = String::new();
-        let mut padding = (self.window_size_col - welcom_len) / 2;
-        welcome_line.push('~');
-        padding = padding - 1;
-        for _ in 0..padding {
-            welcome_line.push(' ');
-        }
-
-        for i in 0..welcom_len {
-            let c = welcom_message.chars().nth(i as usize).unwrap();
-            welcome_line.push(c);
-        }
-
-        welcome_line
+        let padding = (self.terminal.window_size_width as usize - width) / 2;
+        let spaces = " ".repeat(padding.saturating_sub(1));
+        welcom_message.truncate(width);
+        format!("~{}{}", spaces, welcom_message)
     }
 
-    fn get_editor_line_length(&self) -> u16 {
-        self.document.rows.len() as u16
+    fn get_editor_line_length(&self) -> usize {
+        self.document.rows.len()
     }
 
     fn get_editor_buffer_length(&self) -> u16 {
@@ -649,12 +640,12 @@ impl Editor {
         sum as u16
     }
 
-    fn get_current_row_buf_length(&self) -> u16 {
-        self.document.rows[self.cursor_y as usize].buf.len() as u16
+    fn get_current_row_buf_length(&self) -> usize {
+        self.document.rows[self.position.y as usize].buf.len()
     }
 
     fn get_current_row_render_length(&self) -> u16 {
-        self.document.rows[self.cursor_y as usize].render.len() as u16
+        self.document.rows[self.position.y as usize].render.len() as u16
     }
 
     fn set_status_message(&mut self, status_massage: String) {
@@ -688,12 +679,14 @@ impl Editor {
         let right_status = format!(
             "{} | {}/{}",
             file_type,
-            self.cursor_y + 1,
+            self.position.y + 1,
             self.get_editor_line_length()
         );
-        if status.chars().count() + right_status.chars().count() < self.window_size_col as usize {
-            for _ in
-                status.chars().count()..self.window_size_col as usize - right_status.chars().count()
+        if status.chars().count() + right_status.chars().count()
+            < self.terminal.window_size_width as usize
+        {
+            for _ in status.chars().count()
+                ..self.terminal.window_size_width as usize - right_status.chars().count()
             {
                 status.push(' ')
             }
@@ -707,7 +700,7 @@ impl Editor {
             status_line,
             style::Reset
         );
-        print!( "\r\n");
+        print!("\r\n");
     }
 
     fn editor_draw_message_bar(&mut self) {
@@ -716,7 +709,7 @@ impl Editor {
             return;
         }
         for (i, c) in self.status_message.chars().enumerate() {
-            if i < self.window_size_col as usize {
+            if i < self.terminal.window_size_width as usize {
                 message_line.push(c)
             }
         }
@@ -754,15 +747,16 @@ impl Editor {
 
     fn editor_draw_rows(&mut self) {
         self.editor_update_row();
-        for i in 0..self.window_size_row {
-            let file_row = i + self.row_offset as u16;
+        for i in 0..self.terminal.window_size_height {
+            let file_row = i as usize + self.row_offset;
             if file_row >= self.get_editor_line_length() {
-                if self.get_editor_line_length() == 0 && i == (self.window_size_row / 3) {
+                if self.get_editor_line_length() == 0 && i == (self.terminal.window_size_height / 3)
+                {
                     let welcome_line = self.get_welcome_line();
-                    print!( "{}", welcome_line);
+                    print!("{}", welcome_line);
                 } else {
                     let line = format!("~ ");
-                    print!( "{}", line);
+                    print!("{}", line);
                 }
             } else {
                 for (i, c) in self.document.rows[file_row as usize]
@@ -772,51 +766,48 @@ impl Editor {
                 {
                     let mut current_color: Highlight = Highlight::Normal;
                     if i >= self.column_offset as usize
-                        && i < (self.window_size_col + self.column_offset) as usize
+                        && i < (self.terminal.window_size_width + self.column_offset as u16)
+                            as usize
                     {
                         let peek_color = self.document.rows[file_row as usize].highlight[i];
                         if current_color != peek_color {
                             current_color = peek_color;
                             let ansi_value = current_color.editor_syntax_to_color();
-                            print!(
-                                "{}{}{}",
-                                style::Reset,
-                                color::Fg(ansi_value),
-                                c
-                            )
+                            print!("{}{}{}", style::Reset, color::Fg(ansi_value), c)
                         } else {
                             let ansi_value = current_color.editor_syntax_to_color();
-                            print!( "{}{}", color::Fg(ansi_value), c);
+                            print!("{}{}", color::Fg(ansi_value), c);
                         }
                     }
                 }
             }
 
-            if i < self.window_size_row {
-                print!( "\r\n{}", style::Reset);
+            if i < self.terminal.window_size_height {
+                print!("\r\n{}", style::Reset);
             }
         }
     }
 
     fn editor_scroll(&mut self) {
-        if self.cursor_y < self.get_editor_line_length() {
-            self.render_x = self.editor_row_cx2rx();
+        if self.position.y < self.get_editor_line_length() as usize {
+            self.position.render_x = self.editor_row_cx2rx();
         }
 
-        if self.cursor_y < self.row_offset {
-            self.row_offset = self.cursor_y;
+        if self.position.y < self.row_offset {
+            self.row_offset = self.position.y;
         }
 
-        if self.cursor_y >= (self.row_offset + self.window_size_row) {
-            self.row_offset = self.cursor_y - self.window_size_row + 1;
+        if self.position.y >= (self.row_offset + self.terminal.window_size_height as usize) {
+            self.row_offset = self.position.y - self.terminal.window_size_height as usize + 1;
         }
 
-        if self.render_x < self.column_offset {
-            self.column_offset = self.render_x;
+        if self.position.render_x < self.column_offset {
+            self.column_offset = self.position.render_x;
         }
 
-        if self.render_x >= self.column_offset + self.window_size_col {
-            self.column_offset = self.render_x - self.window_size_col + 1;
+        if self.position.render_x >= self.column_offset + self.terminal.window_size_width as usize {
+            self.column_offset =
+                self.position.render_x - self.terminal.window_size_width as usize + 1;
         }
     }
 
@@ -990,8 +981,7 @@ impl Editor {
 
                 // higlight number
                 if self.highlight_numbers() {
-                    if Self::is_digit(c)
-                        || (*c == '.' && preivious_highlight == Highlight::Number)
+                    if Self::is_digit(c) || (*c == '.' && preivious_highlight == Highlight::Number)
                     {
                         highlight[row_index] = Highlight::Number;
                         row_index = row_index + 1;
@@ -1058,20 +1048,29 @@ impl Editor {
         }
     }
 
-    pub fn run() {
-        let _stdout = AlternateScreen::from(stdout().into_raw_mode().unwrap());
+    pub fn default() -> Self {
         let mut editor = Editor::new();
 
         let file_name = "./hello_world.cpp";
         editor.set_status_message(String::from(
             "HELP: Ctr-S = save | Ctr-C = quit | Ctrl-F = find",
         ));
-
         editor.editor_open(file_name);
-        editor.editor_refresh_screen();
 
-        editor.editor_process_key_press();
+        editor
+    }
 
-        print!( "{}", termion::cursor::Show)
+    pub fn run(&mut self) {
+        loop {
+            if let Err(error) = self.editor_refresh_screen() {
+                die(error)
+            }
+            if self.should_quit {
+                break;
+            }
+            if let Err(error) = self.process_keypress() {
+                die(error)
+            }
+        }
     }
 }
