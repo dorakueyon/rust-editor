@@ -1,7 +1,14 @@
-use viewer::Viewer;
+use editor::Editor;
 
-mod viewer;
+mod editor;
+mod document;
+mod highlight;
+mod row;
+
+pub use document::Document;
+pub use highlight::Highlight;
+pub use row::Row;
 
 fn main() {
-    Viewer::run_viwer()
+    Editor::run()
 }

@@ -1,3 +1,7 @@
+use crate::Document;
+use crate::Row;
+use crate::Highlight;
+
 use std::io::{stdin, stdout, Write};
 use termion::event::Key;
 use termion::input::TermRead;
@@ -8,8 +12,6 @@ use chrono::{DateTime, Duration, Utc};
 use std::ffi::OsStr;
 use std::fmt::Debug;
 use std::fs::File;
-use std::io::BufRead;
-use std::io::BufReader;
 use std::path::Path;
 
 use std::fmt::{Display, Formatter, Result as FormatResult};
@@ -72,7 +74,7 @@ impl Display for FileType {
     }
 }
 
-pub struct Viewer {
+pub struct Editor {
     stdout: AlternateScreen<termion::raw::RawTerminal<std::io::Stdout>>,
     cursor_x: u16,
     render_x: u16,
@@ -81,7 +83,7 @@ pub struct Viewer {
     column_offset: u16,
     window_size_col: u16,
     window_size_row: u16,
-    editor_lines: Vec<EditorLine>,
+    document: Document,
     file_name: Option<String>,
     editor_syntax: Option<EditorSyntax>,
     status_message: String,
@@ -91,51 +93,8 @@ pub struct Viewer {
     increment_find: IncrementFind,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
-enum EditorHighlight {
-    Normal,
-    Number,
-    Match,
-    String,
-    Comment,
-    MultiComment,
-    Keyword1,
-    Keyword2,
-}
 
-impl EditorHighlight {
-    fn editor_syntax_to_color(self) -> termion::color::AnsiValue {
-        match self {
-            EditorHighlight::Normal => color::AnsiValue(7), // White
-            EditorHighlight::Number => color::AnsiValue(1), // Red
-            EditorHighlight::Match => color::AnsiValue(4),  // Blue
-            EditorHighlight::String => color::AnsiValue(5), // Magenta
-            EditorHighlight::Comment => color::AnsiValue(6), // Cyan
-            EditorHighlight::MultiComment => color::AnsiValue(6), // Cyan
-            EditorHighlight::Keyword1 => color::AnsiValue(2), // Green
-            EditorHighlight::Keyword2 => color::AnsiValue(3), // Yellow
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct EditorLine {
-    buf: Vec<char>,
-    render: Vec<char>,
-    highlight: Vec<EditorHighlight>,
-}
-
-impl EditorLine {
-    fn render_string(&self) -> String {
-        let mut line = String::new();
-        for c in &self.render {
-            line.push(c.clone());
-        }
-        line
-    }
-}
-
-impl Viewer {
+impl Editor {
     fn enable_raw_mode() -> AlternateScreen<termion::raw::RawTerminal<std::io::Stdout>> {
         let stdout = AlternateScreen::from(stdout().into_raw_mode().unwrap());
         stdout
@@ -168,8 +127,8 @@ impl Viewer {
     }
 
     fn new() -> Self {
-        let stdout = Viewer::enable_raw_mode();
-        let (window_size_col, mut window_size_row) = Viewer::get_window_size();
+        let stdout = Editor::enable_raw_mode();
+        let (window_size_col, mut window_size_row) = Editor::get_window_size();
 
         window_size_row = window_size_row - STATUS_LINE_LENGTH;
         let cursor_x = 0;
@@ -191,7 +150,7 @@ impl Viewer {
             column_offset,
             window_size_col,
             window_size_row,
-            editor_lines: vec![],
+            document: Document::default(),
             file_name: None,
             editor_syntax: None,
             status_message,
@@ -225,29 +184,9 @@ impl Viewer {
     }
 
     fn editor_open(&mut self, file_name: &str) {
-        let file = match File::open(file_name) {
-            Err(why) => panic!("couldn't open {}: {}", file_name, why),
-            Ok(file) => file,
-        };
-
-        let mut editor_lines = vec![];
-        for line in BufReader::new(file).lines() {
-            match line {
-                Ok(s) => {
-                    let mut buf = vec![];
-                    for c in s.trim_end().chars() {
-                        buf.push(c);
-                    }
-                    editor_lines.push(EditorLine {
-                        buf,
-                        render: vec![],
-                        highlight: vec![],
-                    });
-                }
-                Err(_) => {}
-            }
-        }
-        self.editor_lines = editor_lines;
+       
+        let document = Document::open(&file_name);
+        self.document= document;
 
         self.file_name = Some(String::from(file_name));
         self.editor_select_syntax_hilight()
@@ -296,10 +235,10 @@ impl Viewer {
     fn editor_row_insert_char(&mut self, c: char) {
         let mut new_buf = vec![];
         if self.cursor_x == self.get_current_row_buf_length() {
-            new_buf = self.editor_lines[self.cursor_y as usize].buf.clone();
+            new_buf = self.document.rows[self.cursor_y as usize].buf.clone();
             new_buf.push(c);
         } else {
-            for (i, c_existed) in self.editor_lines[self.cursor_y as usize]
+            for (i, c_existed) in self.document.rows[self.cursor_y as usize]
                 .buf
                 .iter()
                 .enumerate()
@@ -310,7 +249,7 @@ impl Viewer {
                 new_buf.push(c_existed.clone())
             }
         }
-        self.editor_lines[self.cursor_y as usize].buf = new_buf;
+        self.document.rows[self.cursor_y as usize].buf = new_buf;
         self.saturated_add_x();
         self.is_dirty = true;
     }
@@ -321,7 +260,7 @@ impl Viewer {
 
     fn editor_row_delete_character(&mut self) {
         let mut new_buf = vec![];
-        for (i, c) in self.editor_lines[self.cursor_y as usize]
+        for (i, c) in self.document.rows[self.cursor_y as usize]
             .buf
             .iter()
             .enumerate()
@@ -332,23 +271,23 @@ impl Viewer {
             new_buf.push(c.clone())
         }
 
-        self.editor_lines[self.cursor_y as usize].buf = new_buf;
+        self.document.rows[self.cursor_y as usize].buf = new_buf;
 
         self.is_dirty = true
     }
 
     fn editor_delete_row(&mut self) {
-        self.editor_lines.remove(self.cursor_y as usize);
+        self.document.rows.remove(self.cursor_y as usize);
     }
 
     fn editor_row_append_string(&mut self, append_from_row_index: usize) {
         let append_to_row_index = append_from_row_index - 1;
 
-        let mut move_to_buf = self.editor_lines[append_to_row_index].buf.clone();
-        let mut move_from_buf = self.editor_lines[append_from_row_index].buf.clone();
+        let mut move_to_buf = self.document.rows[append_to_row_index].buf.clone();
+        let mut move_from_buf = self.document.rows[append_from_row_index].buf.clone();
         move_to_buf.append(&mut move_from_buf);
 
-        self.editor_lines[append_to_row_index].buf = move_to_buf;
+        self.document.rows[append_to_row_index].buf = move_to_buf;
         self.is_dirty = true;
     }
 
@@ -361,7 +300,7 @@ impl Viewer {
             self.editor_row_delete_character();
             self.cursor_x = self.cursor_x - 1;
         } else {
-            self.cursor_x = self.editor_lines[self.cursor_y as usize - 1].buf.len() as u16;
+            self.cursor_x = self.document.rows[self.cursor_y as usize - 1].buf.len() as u16;
 
             self.editor_row_append_string(self.cursor_y as usize);
             self.editor_delete_row();
@@ -374,7 +313,7 @@ impl Viewer {
         let mut right_buf = vec![];
 
         for i in 0..self.get_current_row_buf_length() {
-            let c = self.editor_lines[self.cursor_y as usize].buf[i as usize];
+            let c = self.document.rows[self.cursor_y as usize].buf[i as usize];
             if i < self.cursor_x {
                 left_buf.push(c)
             } else {
@@ -389,28 +328,28 @@ impl Viewer {
         let (left_buf, right_buf) = self.split_line_resulted_from_enter_pressed();
         if self.cursor_y == self.get_editor_line_length() - 1 {
             for i in 0..self.get_editor_line_length() - 1 {
-                let el = &self.editor_lines[i as usize];
-                new_el_vec.push(EditorLine {
+                let el = &self.document.rows[i as usize];
+                new_el_vec.push(Row{
                     buf: el.buf.clone(),
                     render: el.render.clone(),
                     highlight: vec![],
                 })
             }
-            new_el_vec.push(EditorLine {
+            new_el_vec.push(Row{
                 buf: left_buf.clone(),
                 render: vec![],
                 highlight: vec![],
             });
-            new_el_vec.push(EditorLine {
+            new_el_vec.push(Row{
                 buf: right_buf.clone(),
                 render: vec![],
                 highlight: vec![],
             });
         } else {
-            for (i, el) in self.editor_lines.iter().enumerate() {
+            for (i, el) in self.document.rows.iter().enumerate() {
                 // new line
                 if i == self.cursor_y as usize + 1 {
-                    new_el_vec.push(EditorLine {
+                    new_el_vec.push(Row{
                         buf: right_buf.clone(),
                         render: vec![],
                         highlight: vec![],
@@ -419,14 +358,14 @@ impl Viewer {
 
                 // splited line
                 if i == self.cursor_y as usize {
-                    new_el_vec.push(EditorLine {
+                    new_el_vec.push(Row{
                         buf: left_buf.clone(),
                         render: vec![],
                         highlight: vec![],
                     })
                 // just  line
                 } else {
-                    new_el_vec.push(EditorLine {
+                    new_el_vec.push(Row{
                         buf: el.buf.clone(),
                         render: vec![],
                         highlight: vec![],
@@ -434,7 +373,7 @@ impl Viewer {
                 }
             }
         }
-        self.editor_lines = new_el_vec;
+        self.document.rows = new_el_vec;
         self.saturated_add_y();
         self.cursor_x = 0
     }
@@ -484,7 +423,7 @@ impl Viewer {
             Some(s) => match File::create(s) {
                 Ok(mut f) => {
                     for i in 0..self.get_editor_line_length() {
-                        let buf = &self.editor_lines[i as usize]
+                        let buf = &self.document.rows[i as usize]
                             .buf
                             .iter()
                             .cloned()
@@ -508,7 +447,7 @@ impl Viewer {
         let mut current_render_x: u16 = 0;
         let mut target_cursor_x: u16 = 0;
 
-        let current_buf_row = &self.editor_lines[self.cursor_y as usize].buf;
+        let current_buf_row = &self.document.rows[self.cursor_y as usize].buf;
         for (_, c) in current_buf_row.iter().enumerate() {
             if *c == '\t' {
                 current_render_x = current_render_x + (KILL_TAB_STOP as u16 - 1)
@@ -554,7 +493,7 @@ impl Viewer {
                 current_row = 0
             }
 
-            let row = &self.editor_lines[current_row as usize].render_string();
+            let row = &self.document.rows[current_row as usize].render_string();
 
             if let Some(x) = row.find(&query) {
                 self.increment_find.last_mached_row = Some(current_row as i16);
@@ -562,8 +501,8 @@ impl Viewer {
                 self.cursor_x = self.editor_row_rx2cx(x as u16);
 
                 for i in 0..query.chars().count() {
-                    self.editor_lines[current_row as usize].highlight[x + i] =
-                        EditorHighlight::Match
+                    self.document.rows[current_row as usize].highlight[x + i] =
+                        Highlight::Match
                 }
                 break;
             }
@@ -588,7 +527,7 @@ impl Viewer {
     fn editor_process_key_press(&mut self) {
         for c in stdin().keys() {
             //dbg!(&c);
-            dbg!(&self.editor_lines[self.cursor_y as usize]);
+            dbg!(&self.document.rows[self.cursor_y as usize]);
             match c {
                 Ok(event::Key::Ctrl('c')) | Ok(event::Key::Ctrl('q')) => {
                     if self.is_dirty && self.quit_times > 0 {
@@ -637,7 +576,7 @@ impl Viewer {
         if self.cursor_x == 0 {
             return render_x;
         }
-        let row = &self.editor_lines[self.cursor_y as usize];
+        let row = &self.document.rows[self.cursor_y as usize];
         for i in 0..self.cursor_x {
             if row.buf[i as usize] == '\t' {
                 render_x = render_x + (KILL_TAB_STOP as u16 - 1) - (render_x % KILL_TAB_STOP as u16)
@@ -665,7 +604,7 @@ impl Viewer {
             self.row_offset,
             self.get_current_row_buf_length(),
             self.get_current_row_render_length(),
-            self.editor_lines.len()
+            self.document.rows.len()
         );
         write!(
             self.stdout,
@@ -705,23 +644,23 @@ impl Viewer {
     }
 
     fn get_editor_line_length(&self) -> u16 {
-        self.editor_lines.len() as u16
+        self.document.rows.len() as u16
     }
 
     fn get_editor_buffer_length(&self) -> u16 {
         let mut sum = 0;
-        for line in &self.editor_lines {
+        for line in &self.document.rows {
             sum = line.buf.len() * std::mem::size_of::<char>();
         }
         sum as u16
     }
 
     fn get_current_row_buf_length(&self) -> u16 {
-        self.editor_lines[self.cursor_y as usize].buf.len() as u16
+        self.document.rows[self.cursor_y as usize].buf.len() as u16
     }
 
     fn get_current_row_render_length(&self) -> u16 {
-        self.editor_lines[self.cursor_y as usize].render.len() as u16
+        self.document.rows[self.cursor_y as usize].render.len() as u16
     }
 
     fn set_status_message(&mut self, status_massage: String) {
@@ -803,7 +742,7 @@ impl Viewer {
 
     fn editor_update_row(&mut self) {
         let mut new_vec = vec![];
-        for (_, line) in self.editor_lines.iter().enumerate() {
+        for (_, line) in self.document.rows.iter().enumerate() {
             let mut render = vec![]; // TODO: pushではなくて、メモリ確保して処理する
             for c in line.buf.iter() {
                 if *c == '\t' {
@@ -817,7 +756,7 @@ impl Viewer {
             new_vec.push(render);
         }
         for i in 0..self.get_editor_line_length() {
-            self.editor_lines[i as usize].render = new_vec[i as usize].clone();
+            self.document.rows[i as usize].render = new_vec[i as usize].clone();
         }
 
         self.editor_update_syntax()
@@ -836,16 +775,16 @@ impl Viewer {
                     write!(self.stdout, "{}", line).unwrap();
                 }
             } else {
-                for (i, c) in self.editor_lines[file_row as usize]
+                for (i, c) in self.document.rows[file_row as usize]
                     .render
                     .iter()
                     .enumerate()
                 {
-                    let mut current_color: EditorHighlight = EditorHighlight::Normal;
+                    let mut current_color: Highlight = Highlight::Normal;
                     if i >= self.column_offset as usize
                         && i < (self.window_size_col + self.column_offset) as usize
                     {
-                        let peek_color = self.editor_lines[file_row as usize].highlight[i];
+                        let peek_color = self.document.rows[file_row as usize].highlight[i];
                         if current_color != peek_color {
                             current_color = peek_color;
                             let ansi_value = current_color.editor_syntax_to_color();
@@ -902,15 +841,15 @@ impl Viewer {
 
     fn default_hilight(&mut self) {
         let mut highlight = vec![];
-        for e_l in &self.editor_lines {
+        for e_l in &self.document.rows {
             let mut line = vec![];
             for _c in &e_l.render {
-                line.push(EditorHighlight::Normal);
+                line.push(Highlight::Normal);
             }
             highlight.push(line);
         }
         for i in 0..self.get_editor_line_length() {
-            self.editor_lines[i as usize].highlight = highlight[i as usize].clone();
+            self.document.rows[i as usize].highlight = highlight[i as usize].clone();
         }
     }
 
@@ -953,7 +892,7 @@ impl Viewer {
                 continue;
             }
 
-            if Viewer::is_separator(&c) {
+            if Editor::is_separator(&c) {
                 break;
             };
 
@@ -1011,11 +950,11 @@ impl Viewer {
         let mut in_string: char = '\0';
         let mut is_in_comment: bool = false;
 
-        for (column_index, e_l) in self.editor_lines.iter().enumerate() {
-            let mut highlight = vec![EditorHighlight::Normal; e_l.render.len()];
+        for (column_index, e_l) in self.document.rows.iter().enumerate() {
+            let mut highlight = vec![Highlight::Normal; e_l.render.len()];
             let row = &e_l.render;
             let mut row_index = 0;
-            let mut preivious_highlight = EditorHighlight::Normal;
+            let mut preivious_highlight = Highlight::Normal;
 
             while row_index < e_l.render.len() {
                 let c = &row[row_index];
@@ -1028,7 +967,7 @@ impl Viewer {
                 if !is_in_string && !is_in_comment {
                     if self.has_singleline_comment_started(row_index, &e_l.render) {
                         while row_index < e_l.render.len() {
-                            highlight[row_index] = EditorHighlight::Comment;
+                            highlight[row_index] = Highlight::Comment;
                             row_index = row_index + 1
                         }
                         break;
@@ -1038,12 +977,12 @@ impl Viewer {
                 // higlight mult comment
                 if self.highlight_multi_comment() && !is_in_string {
                     if is_in_comment {
-                        highlight[row_index] = EditorHighlight::MultiComment;
+                        highlight[row_index] = Highlight::MultiComment;
 
                         if self.str_compare(&row, row_index, &self.multi_comment_end()) {
                             is_in_comment = false;
                             for _ in 0..self.multi_comment_end_len() {
-                                highlight[row_index] = EditorHighlight::MultiComment;
+                                highlight[row_index] = Highlight::MultiComment;
                                 row_index = row_index + 1;
                             }
                             continue;
@@ -1053,7 +992,7 @@ impl Viewer {
                         }
                     } else if self.str_compare(&row, row_index, &self.multi_comment_start()) {
                         for _ in 0..self.multi_comment_start_len() {
-                            highlight[row_index] = EditorHighlight::MultiComment;
+                            highlight[row_index] = Highlight::MultiComment;
                             row_index = row_index + 1;
                         }
                         is_in_comment = true;
@@ -1064,9 +1003,9 @@ impl Viewer {
                 // higlight number
                 if self.highlight_numbers() {
                     if Self::is_digit(c)
-                        || (*c == '.' && preivious_highlight == EditorHighlight::Number)
+                        || (*c == '.' && preivious_highlight == Highlight::Number)
                     {
-                        highlight[row_index] = EditorHighlight::Number;
+                        highlight[row_index] = Highlight::Number;
                         row_index = row_index + 1;
                         continue;
                     }
@@ -1075,7 +1014,7 @@ impl Viewer {
                 // highlight strings
                 if self.highlight_strings() {
                     if is_in_string {
-                        highlight[row_index] = EditorHighlight::String;
+                        highlight[row_index] = Highlight::String;
 
                         if row_index > 0
                             && e_l.render[row_index as usize - 1] == '\\'
@@ -1094,7 +1033,7 @@ impl Viewer {
                         if *c == '"' || *c == '\'' {
                             is_in_string = true;
                             in_string = *c;
-                            highlight[row_index] = EditorHighlight::String;
+                            highlight[row_index] = Highlight::String;
 
                             row_index = row_index + 1;
                             continue;
@@ -1103,11 +1042,11 @@ impl Viewer {
                 }
                 // hilight keywords
                 if previous_separator {
-                    let row = &self.editor_lines[column_index].render_string();
+                    let row = &self.document.rows[column_index].render_string();
                     let word = &*self.get_word(row, row_index);
                     if KEY_WORD_1.contains(&word) {
                         for _ in 0..word.chars().count() {
-                            highlight[row_index] = EditorHighlight::Keyword1;
+                            highlight[row_index] = Highlight::Keyword1;
                             row_index = row_index + 1;
                         }
                         continue;
@@ -1115,7 +1054,7 @@ impl Viewer {
 
                     if KEY_WORD_2.contains(&word) {
                         for _ in 0..word.chars().count() {
-                            highlight[row_index] = EditorHighlight::Keyword2;
+                            highlight[row_index] = Highlight::Keyword2;
                             row_index = row_index + 1;
                         }
                         continue;
@@ -1127,23 +1066,23 @@ impl Viewer {
             highlight_matrix.push(highlight);
         }
         for i in 0..self.get_editor_line_length() {
-            self.editor_lines[i as usize].highlight = highlight_matrix[i as usize].clone();
+            self.document.rows[i as usize].highlight = highlight_matrix[i as usize].clone();
         }
     }
 
-    pub fn run_viwer() {
-        let mut viewer = Viewer::new();
+    pub fn run() {
+        let mut editor = Editor::new();
 
         let file_name = "./hello_world.cpp";
-        viewer.set_status_message(String::from(
+        editor.set_status_message(String::from(
             "HELP: Ctr-S = save | Ctr-C = quit | Ctrl-F = find",
         ));
 
-        viewer.editor_open(file_name);
-        viewer.editor_refresh_screen();
+        editor.editor_open(file_name);
+        editor.editor_refresh_screen();
 
-        viewer.editor_process_key_press();
+        editor.editor_process_key_press();
 
-        write!(viewer.stdout, "{}", termion::cursor::Show).unwrap();
+        write!(editor.stdout, "{}", termion::cursor::Show).unwrap();
     }
 }
