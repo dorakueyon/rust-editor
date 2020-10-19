@@ -4,6 +4,7 @@ use crate::Row;
 use crate::Terminal;
 
 use chrono::{DateTime, Duration, Utc};
+use std::env;
 use std::ffi::OsStr;
 use std::fmt::Debug;
 use std::fs::File;
@@ -74,6 +75,7 @@ fn die(e: std::io::Error) {
     panic!(e)
 }
 
+#[derive(Default)]
 pub struct Position {
     pub x: usize,
     pub render_x: usize,
@@ -119,9 +121,6 @@ impl Editor {
     }
 
     fn new() -> Self {
-        let x = 0;
-        let y = 0;
-        let render_x = 0;
         let row_offset = 0;
         let column_offset = 0;
         let status_message = String::new();
@@ -131,7 +130,7 @@ impl Editor {
         let should_quit = false;
 
         Self {
-            position: Position { x, render_x, y },
+            position: Position::default(),
             row_offset,
             column_offset,
             terminal: Terminal::default(),
@@ -167,14 +166,6 @@ impl Editor {
                 None => return,
             },
         }
-    }
-
-    fn editor_open(&mut self, file_name: &str) {
-        let document = Document::open(&file_name);
-        self.document = document;
-
-        self.file_name = Some(String::from(file_name));
-        self.editor_select_syntax_hilight()
     }
 
     fn saturated_add_x(&mut self) {
@@ -220,10 +211,18 @@ impl Editor {
     fn editor_row_insert_char(&mut self, c: char) {
         let mut new_buf = vec![];
         if self.position.x == self.get_current_row_buf_length() {
-            new_buf = self.document.rows[self.position.y as usize].buf.clone();
+            new_buf = self
+                .document
+                .row(self.position.y as usize)
+                .unwrap()
+                .buf
+                .clone();
             new_buf.push(c);
         } else {
-            for (i, c_existed) in self.document.rows[self.position.y as usize]
+            for (i, c_existed) in self
+                .document
+                .row(self.position.y as usize)
+                .unwrap()
                 .buf
                 .iter()
                 .enumerate()
@@ -234,7 +233,7 @@ impl Editor {
                 new_buf.push(c_existed.clone())
             }
         }
-        self.document.rows[self.position.y as usize].buf = new_buf;
+        self.document.replace_buf(self.position.y as usize, new_buf);
         self.saturated_add_x();
         self.is_dirty = true;
     }
@@ -245,7 +244,10 @@ impl Editor {
 
     fn editor_row_delete_character(&mut self) {
         let mut new_buf = vec![];
-        for (i, c) in self.document.rows[self.position.y as usize]
+        for (i, c) in self
+            .document
+            .row(self.position.y as usize)
+            .unwrap()
             .buf
             .iter()
             .enumerate()
@@ -256,7 +258,7 @@ impl Editor {
             new_buf.push(c.clone())
         }
 
-        self.document.rows[self.position.y as usize].buf = new_buf;
+        self.document.replace_buf(self.position.y as usize, new_buf);
 
         self.is_dirty = true
     }
@@ -268,11 +270,16 @@ impl Editor {
     fn editor_row_append_string(&mut self, append_from_row_index: usize) {
         let append_to_row_index = append_from_row_index - 1;
 
-        let mut move_to_buf = self.document.rows[append_to_row_index].buf.clone();
-        let mut move_from_buf = self.document.rows[append_from_row_index].buf.clone();
+        let mut move_to_buf = self.document.row(append_to_row_index).unwrap().buf.clone();
+        let mut move_from_buf = self
+            .document
+            .row(append_from_row_index)
+            .unwrap()
+            .buf
+            .clone();
         move_to_buf.append(&mut move_from_buf);
 
-        self.document.rows[append_to_row_index].buf = move_to_buf;
+        self.document.replace_buf(append_to_row_index, move_to_buf);
         self.is_dirty = true;
     }
 
@@ -285,7 +292,12 @@ impl Editor {
             self.editor_row_delete_character();
             self.position.x = self.position.x - 1;
         } else {
-            self.position.x = self.document.rows[self.position.y as usize - 1].buf.len();
+            self.position.x = self
+                .document
+                .row(self.position.y as usize - 1)
+                .unwrap()
+                .buf
+                .len();
 
             self.editor_row_append_string(self.position.y as usize);
             self.editor_delete_row();
@@ -298,7 +310,7 @@ impl Editor {
         let mut right_buf = vec![];
 
         for i in 0..self.get_current_row_buf_length() {
-            let c = self.document.rows[self.position.y as usize].buf[i as usize];
+            let c = self.document.row(self.position.y as usize).unwrap().buf[i as usize];
             if i < self.position.x {
                 left_buf.push(c)
             } else {
@@ -313,7 +325,7 @@ impl Editor {
         let (left_buf, right_buf) = self.split_line_resulted_from_enter_pressed();
         if self.position.y == self.get_editor_line_length() - 1 {
             for i in 0..self.get_editor_line_length() - 1 {
-                let el = &self.document.rows[i as usize];
+                let el = &self.document.row(i as usize).unwrap();
                 new_el_vec.push(Row {
                     buf: el.buf.clone(),
                     render: el.render.clone(),
@@ -409,7 +421,10 @@ impl Editor {
             Some(s) => match File::create(s) {
                 Ok(mut f) => {
                     for i in 0..self.get_editor_line_length() {
-                        let buf = &self.document.rows[i as usize]
+                        let buf = &self
+                            .document
+                            .row(i as usize)
+                            .unwrap()
                             .buf
                             .iter()
                             .cloned()
@@ -433,7 +448,7 @@ impl Editor {
         let mut current_render_x = 0;
         let mut target_cursor_x = 0;
 
-        let current_buf_row = &self.document.rows[self.position.y as usize].buf;
+        let current_buf_row = &self.document.row(self.position.y as usize).unwrap().buf;
         for (_, c) in current_buf_row.iter().enumerate() {
             if *c == '\t' {
                 current_render_x = current_render_x + (KILL_TAB_STOP as usize - 1)
@@ -479,15 +494,23 @@ impl Editor {
                 current_row = 0
             }
 
-            let row = &self.document.rows[current_row as usize].render_string();
+            let row = &self
+                .document
+                .row(current_row as usize)
+                .unwrap()
+                .render_string();
 
             if let Some(x) = row.find(&query) {
                 self.increment_find.last_mached_row = Some(current_row);
                 self.position.y = current_row as usize;
                 self.position.x = self.editor_row_rx2cx(x);
 
-                for i in 0..query.chars().count() {
-                    self.document.rows[current_row as usize].highlight[x + i] = Highlight::Match
+                for _ in 0..query.chars().count() {
+                    self.document.replace_char_highlight(
+                        current_row as usize,
+                        x + 1,
+                        Highlight::Match,
+                    );
                 }
                 break;
             }
@@ -568,7 +591,7 @@ impl Editor {
         if self.position.x == 0 {
             return render_x;
         }
-        let row = &self.document.rows[self.position.y as usize];
+        let row = &self.document.row(self.position.y as usize).unwrap();
         for i in 0..self.position.x {
             if row.buf[i as usize] == '\t' {
                 render_x =
@@ -584,11 +607,7 @@ impl Editor {
         self.editor_scroll();
         Terminal::cursor_hide();
         Terminal::clear_screen();
-        Terminal::cursor_position(&Position {
-            x: 0,
-            y: 0,
-            render_x: 0,
-        });
+        Terminal::cursor_position(&Position::default());
 
         self.editor_draw_rows();
         self.editor_draw_status_bar();
@@ -641,11 +660,19 @@ impl Editor {
     }
 
     fn get_current_row_buf_length(&self) -> usize {
-        self.document.rows[self.position.y as usize].buf.len()
+        self.document
+            .row(self.position.y as usize)
+            .unwrap()
+            .buf
+            .len()
     }
 
     fn get_current_row_render_length(&self) -> u16 {
-        self.document.rows[self.position.y as usize].render.len() as u16
+        self.document
+            .row(self.position.y as usize)
+            .unwrap()
+            .render
+            .len() as u16
     }
 
     fn set_status_message(&mut self, status_massage: String) {
@@ -739,7 +766,8 @@ impl Editor {
             new_vec.push(render);
         }
         for i in 0..self.get_editor_line_length() {
-            self.document.rows[i as usize].render = new_vec[i as usize].clone();
+            self.document
+                .replace_render(i as usize, new_vec[i as usize].clone());
         }
 
         self.editor_update_syntax()
@@ -759,7 +787,10 @@ impl Editor {
                     print!("{}", line);
                 }
             } else {
-                for (i, c) in self.document.rows[file_row as usize]
+                for (i, c) in self
+                    .document
+                    .row(file_row as usize)
+                    .unwrap()
                     .render
                     .iter()
                     .enumerate()
@@ -769,7 +800,7 @@ impl Editor {
                         && i < (self.terminal.window_size_width + self.column_offset as u16)
                             as usize
                     {
-                        let peek_color = self.document.rows[file_row as usize].highlight[i];
+                        let peek_color = self.document.row(file_row as usize).unwrap().highlight[i];
                         if current_color != peek_color {
                             current_color = peek_color;
                             let ansi_value = current_color.editor_syntax_to_color();
@@ -828,7 +859,8 @@ impl Editor {
             highlight.push(line);
         }
         for i in 0..self.get_editor_line_length() {
-            self.document.rows[i as usize].highlight = highlight[i as usize].clone();
+            self.document
+                .replace_highlight(i as usize, highlight[i as usize].clone());
         }
     }
 
@@ -1020,7 +1052,7 @@ impl Editor {
                 }
                 // hilight keywords
                 if previous_separator {
-                    let row = &self.document.rows[column_index].render_string();
+                    let row = &self.document.row(column_index).unwrap().render_string();
                     let word = &*self.get_word(row, row_index);
                     if KEY_WORD_1.contains(&word) {
                         for _ in 0..word.chars().count() {
@@ -1044,18 +1076,30 @@ impl Editor {
             highlight_matrix.push(highlight);
         }
         for i in 0..self.get_editor_line_length() {
-            self.document.rows[i as usize].highlight = highlight_matrix[i as usize].clone();
+            self.document
+                .replace_highlight(i as usize, highlight_matrix[i as usize].clone());
         }
     }
 
     pub fn default() -> Self {
         let mut editor = Editor::new();
 
-        let file_name = "./hello_world.cpp";
         editor.set_status_message(String::from(
             "HELP: Ctr-S = save | Ctr-C = quit | Ctrl-F = find",
         ));
-        editor.editor_open(file_name);
+
+        let args: Vec<String> = env::args().collect();
+        let document = if args.len() > 1 {
+            let file_name = &args[1];
+            let document = Document::open(file_name).unwrap_or_default();
+
+            editor.file_name = Some(String::from(file_name));
+            editor.editor_select_syntax_hilight();
+            document
+        } else {
+            Document::default()
+        };
+        editor.document = document;
 
         editor
     }

@@ -1,3 +1,3 @@
 #!/bin/bash
 
-cargo run -- $* 2>log.txt
+cargo run hello_world.cpp -- $* 2>log.txt
