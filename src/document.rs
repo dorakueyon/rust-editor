@@ -15,17 +15,7 @@ impl Document {
         let mut editor_lines = vec![];
         for line in BufReader::new(file).lines() {
             match line {
-                Ok(s) => {
-                    let mut buf = vec![];
-                    for c in s.trim_end().chars() {
-                        buf.push(c);
-                    }
-                    editor_lines.push(Row {
-                        buf,
-                        render: vec![],
-                        highlight: vec![],
-                    });
-                }
+                Ok(s) => editor_lines.push(Row::from(&s)),
                 Err(_) => {}
             }
         }
@@ -34,6 +24,14 @@ impl Document {
 
     pub fn row(&self, index: usize) -> Option<&Row> {
         self.rows.get(index)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.rows.len()
     }
 
     pub fn replace_buf(&mut self, index: usize, new_buf: Vec<char>) -> Result<(), std::io::Error> {

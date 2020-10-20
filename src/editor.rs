@@ -75,7 +75,7 @@ fn die(e: std::io::Error) {
     panic!(e)
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Position {
     pub x: usize,
     pub render_x: usize,
@@ -85,8 +85,7 @@ pub struct Position {
 pub struct Editor {
     terminal: Terminal,
     position: Position,
-    row_offset: usize,
-    column_offset: usize,
+    offset: Position,
     document: Document,
     file_name: Option<String>,
     editor_syntax: Option<EditorSyntax>,
@@ -131,8 +130,7 @@ impl Editor {
 
         Self {
             position: Position::default(),
-            row_offset,
-            column_offset,
+            offset: Position::default(),
             terminal: Terminal::default(),
             document: Document::default(),
             file_name: None,
@@ -172,7 +170,7 @@ impl Editor {
         if self.position.x < self.get_current_row_buf_length() {
             self.position.x = self.position.x + 1;
         } else {
-            if self.position.y + 1 < self.get_editor_line_length() {
+            if self.position.y + 1 < self.document.len() {
                 self.saturated_add_y();
                 self.position.x = 0;
             }
@@ -191,7 +189,7 @@ impl Editor {
     }
 
     fn saturated_add_y(&mut self) {
-        if self.position.y + 1 < self.get_editor_line_length() {
+        if self.position.y + 1 < self.document.len() {
             self.position.y = self.position.y + 1;
             if (self.position.x) > self.get_current_row_buf_length() {
                 self.position.x = self.get_current_row_buf_length()
@@ -323,8 +321,8 @@ impl Editor {
     fn editor_insert_new_line(&mut self) {
         let mut new_el_vec = vec![];
         let (left_buf, right_buf) = self.split_line_resulted_from_enter_pressed();
-        if self.position.y == self.get_editor_line_length() - 1 {
-            for i in 0..self.get_editor_line_length() - 1 {
+        if self.position.y == self.document.len() - 1 {
+            for i in 0..self.document.len() - 1 {
                 let el = &self.document.row(i as usize).unwrap();
                 new_el_vec.push(Row {
                     buf: el.buf.clone(),
@@ -420,7 +418,7 @@ impl Editor {
             None => return,
             Some(s) => match File::create(s) {
                 Ok(mut f) => {
-                    for i in 0..self.get_editor_line_length() {
+                    for i in 0..self.document.len() {
                         let buf = &self
                             .document
                             .row(i as usize)
@@ -483,14 +481,14 @@ impl Editor {
             current_row = i
         }
 
-        for _ in 0..self.get_editor_line_length() {
+        for _ in 0..self.document.len() {
             match self.increment_find.direction {
                 IncrementFindDirection::Forward => current_row = current_row + 1,
                 IncrementFindDirection::Backward => current_row = current_row - 1,
             }
             if current_row == -1 {
-                current_row = self.get_editor_line_length() as i16 - 1
-            } else if current_row == self.get_editor_line_length() as i16 {
+                current_row = self.document.len() as i16 - 1
+            } else if current_row == self.document.len() as i16 {
                 current_row = 0
             }
 
@@ -520,15 +518,15 @@ impl Editor {
     fn editor_find(&mut self) {
         let saved_cursor_x = self.position.x;
         let saved_cursor_y = self.position.y;
-        let saved_column_offset = self.column_offset;
-        let saved_row_offset = self.row_offset;
+        let saved_column_offset = self.offset.y;
+        let saved_row_offset = self.offset.x;
 
         let query = self.editor_prompt(String::from("Search:"), Self::on_incremental_find);
         if query.is_empty() {
             self.position.x = saved_cursor_x;
             self.position.y = saved_cursor_y;
-            self.column_offset = saved_column_offset;
-            self.row_offset = saved_row_offset;
+            self.offset.y = saved_column_offset;
+            self.offset.x = saved_row_offset;
         }
     }
 
@@ -618,7 +616,7 @@ impl Editor {
             self.position.render_x,
             self.position.y,
             self.position.x,
-            self.row_offset,
+            self.offset.x,
             self.get_current_row_buf_length(),
             self.get_current_row_render_length(),
             self.document.rows.len()
@@ -645,10 +643,6 @@ impl Editor {
         let spaces = " ".repeat(padding.saturating_sub(1));
         welcom_message.truncate(width);
         format!("~{}{}", spaces, welcom_message)
-    }
-
-    fn get_editor_line_length(&self) -> usize {
-        self.document.rows.len()
     }
 
     fn get_editor_buffer_length(&self) -> u16 {
@@ -693,30 +687,36 @@ impl Editor {
             }
             None => display_file_name = String::from("[No Name]"),
         }
+        let mut modified_status = "";
+        if self.is_dirty {
+            modified_status = "(modified)"
+        }
         let mut status = format!(
             "{} - {} lines {}",
             display_file_name,
-            self.get_editor_line_length(),
-            if self.is_dirty { "(modified)" } else { "" }
+            self.document.len(),
+            modified_status
         );
         let file_type = match &self.editor_syntax {
             Some(s) => format!("{}", &s.file_type),
             None => String::from("no ft"),
         };
-        let right_status = format!(
+
+        let mut right_status = format!(
             "{} | {}/{}",
             file_type,
             self.position.y + 1,
-            self.get_editor_line_length()
+            self.document.len()
         );
         if status.chars().count() + right_status.chars().count()
-            < self.terminal.window_size_width as usize
+            > self.terminal.window_size_width as usize
         {
-            for _ in status.chars().count()
-                ..self.terminal.window_size_width as usize - right_status.chars().count()
-            {
-                status.push(' ')
-            }
+            right_status = String::new();
+        }
+        for _ in status.chars().count()
+            ..self.terminal.window_size_width as usize - right_status.chars().count()
+        {
+            status.push(' ')
         }
         let status_line = format!("{}{}", status, right_status);
 
@@ -765,7 +765,7 @@ impl Editor {
             }
             new_vec.push(render);
         }
-        for i in 0..self.get_editor_line_length() {
+        for i in 0..self.document.len() {
             self.document
                 .replace_render(i as usize, new_vec[i as usize].clone());
         }
@@ -773,13 +773,31 @@ impl Editor {
         self.editor_update_syntax()
     }
 
+    fn draw_row(&self, row: &Row) {
+        for (j, c) in row.render.iter().enumerate() {
+            let mut current_color: Highlight = Highlight::Normal;
+            if j >= self.offset.y as usize
+                && j < (self.terminal.window_size_width + self.offset.y as u16) as usize
+            {
+                let peek_color = row.highlight[j];
+                if current_color != peek_color {
+                    current_color = peek_color;
+                    let ansi_value = current_color.editor_syntax_to_color();
+                    print!("{}{}{}", style::Reset, color::Fg(ansi_value), c)
+                } else {
+                    let ansi_value = current_color.editor_syntax_to_color();
+                    print!("{}{}", color::Fg(ansi_value), c);
+                }
+            }
+        }
+    }
+
     fn editor_draw_rows(&mut self) {
         self.editor_update_row();
         for i in 0..self.terminal.window_size_height {
-            let file_row = i as usize + self.row_offset;
-            if file_row >= self.get_editor_line_length() {
-                if self.get_editor_line_length() == 0 && i == (self.terminal.window_size_height / 3)
-                {
+            let file_row = i as usize + self.offset.x;
+            if file_row >= self.document.len() {
+                if self.document.is_empty() && i == (self.terminal.window_size_height / 3) {
                     let welcome_line = self.get_welcome_line();
                     print!("{}", welcome_line);
                 } else {
@@ -787,29 +805,8 @@ impl Editor {
                     print!("{}", line);
                 }
             } else {
-                for (i, c) in self
-                    .document
-                    .row(file_row as usize)
-                    .unwrap()
-                    .render
-                    .iter()
-                    .enumerate()
-                {
-                    let mut current_color: Highlight = Highlight::Normal;
-                    if i >= self.column_offset as usize
-                        && i < (self.terminal.window_size_width + self.column_offset as u16)
-                            as usize
-                    {
-                        let peek_color = self.document.row(file_row as usize).unwrap().highlight[i];
-                        if current_color != peek_color {
-                            current_color = peek_color;
-                            let ansi_value = current_color.editor_syntax_to_color();
-                            print!("{}{}{}", style::Reset, color::Fg(ansi_value), c)
-                        } else {
-                            let ansi_value = current_color.editor_syntax_to_color();
-                            print!("{}{}", color::Fg(ansi_value), c);
-                        }
-                    }
+                if let Some(row) = self.document.row(file_row as usize) {
+                    self.draw_row(row)
                 }
             }
 
@@ -820,25 +817,24 @@ impl Editor {
     }
 
     fn editor_scroll(&mut self) {
-        if self.position.y < self.get_editor_line_length() as usize {
+        if self.position.y < self.document.len() as usize {
             self.position.render_x = self.editor_row_cx2rx();
         }
 
-        if self.position.y < self.row_offset {
-            self.row_offset = self.position.y;
+        if self.position.y < self.offset.x {
+            self.offset.x = self.position.y;
         }
 
-        if self.position.y >= (self.row_offset + self.terminal.window_size_height as usize) {
-            self.row_offset = self.position.y - self.terminal.window_size_height as usize + 1;
+        if self.position.y >= (self.offset.x + self.terminal.window_size_height as usize) {
+            self.offset.x = self.position.y - self.terminal.window_size_height as usize + 1;
         }
 
-        if self.position.render_x < self.column_offset {
-            self.column_offset = self.position.render_x;
+        if self.position.render_x < self.offset.y {
+            self.offset.y = self.position.render_x;
         }
 
-        if self.position.render_x >= self.column_offset + self.terminal.window_size_width as usize {
-            self.column_offset =
-                self.position.render_x - self.terminal.window_size_width as usize + 1;
+        if self.position.render_x >= self.offset.y + self.terminal.window_size_width as usize {
+            self.offset.y = self.position.render_x - self.terminal.window_size_width as usize + 1;
         }
     }
 
@@ -858,7 +854,7 @@ impl Editor {
             }
             highlight.push(line);
         }
-        for i in 0..self.get_editor_line_length() {
+        for i in 0..self.document.len() {
             self.document
                 .replace_highlight(i as usize, highlight[i as usize].clone());
         }
@@ -1075,7 +1071,7 @@ impl Editor {
 
             highlight_matrix.push(highlight);
         }
-        for i in 0..self.get_editor_line_length() {
+        for i in 0..self.document.len() {
             self.document
                 .replace_highlight(i as usize, highlight_matrix[i as usize].clone());
         }

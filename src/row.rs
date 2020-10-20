@@ -24,10 +24,14 @@ impl Row {
     }
 }
 
-impl From<&str> for Row {
-    fn from(slice: &str) -> Self {
+impl From<&String> for Row {
+    fn from(slice: &String) -> Self {
+        let mut buf = vec![];
+        for c in slice.trim_end().chars() {
+            buf.push(c);
+        }
         Self {
-            buf: vec![],
+            buf,
             render: vec![],
             highlight: vec![],
         }
