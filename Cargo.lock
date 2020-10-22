@@ -71,6 +71,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "termion",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -95,6 +96,12 @@ dependencies = [
  "wasi",
  "winapi",
 ]
+
+[[package]]
+name = "unicode-segmentation"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e83e153d1053cbb5a118eeff7fd5be06ed99153f00dbcd8ae310c5fb2b22edc0"
 
 [[package]]
 name = "wasi"

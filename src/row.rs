@@ -1,5 +1,6 @@
 use crate::Highlight;
 use std::cmp;
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Debug, Clone)]
 pub struct Row {
@@ -22,6 +23,10 @@ impl Row {
         let start = cmp::min(start, end);
         self.render[start..end].iter().collect()
     }
+
+    pub fn buf_len(&self) -> usize {
+        self.buf.len()
+    }
 }
 
 impl From<&String> for Row {
@@ -30,6 +35,10 @@ impl From<&String> for Row {
         for c in slice.trim_end().chars() {
             buf.push(c);
         }
+        //for grapheme in slice.graphemes(true) {
+        //    dbg!(grapheme);
+        //    buf.push(grapheme.chars().next().unwrap_or(' '));
+        //}
         Self {
             buf,
             render: vec![],

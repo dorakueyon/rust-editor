@@ -189,7 +189,7 @@ impl Editor {
     }
 
     fn saturated_add_y(&mut self) {
-        if self.position.y + 1 < self.document.len() {
+        if self.position.y < self.document.len() {
             self.position.y = self.position.y + 1;
             if (self.position.x) > self.get_current_row_buf_length() {
                 self.position.x = self.get_current_row_buf_length()
@@ -518,15 +518,15 @@ impl Editor {
     fn editor_find(&mut self) {
         let saved_cursor_x = self.position.x;
         let saved_cursor_y = self.position.y;
-        let saved_column_offset = self.offset.y;
-        let saved_row_offset = self.offset.x;
+        let saved_column_offset = self.offset.x;
+        let saved_row_offset = self.offset.y;
 
         let query = self.editor_prompt(String::from("Search:"), Self::on_incremental_find);
         if query.is_empty() {
             self.position.x = saved_cursor_x;
             self.position.y = saved_cursor_y;
-            self.offset.y = saved_column_offset;
-            self.offset.x = saved_row_offset;
+            self.offset.x = saved_column_offset;
+            self.offset.y = saved_row_offset;
         }
     }
 
@@ -584,7 +584,7 @@ impl Editor {
         }
     }
 
-    fn editor_row_cx2rx(&mut self) -> usize {
+    fn editor_row_cx2rx(&self) -> usize {
         let mut render_x = 0;
         if self.position.x == 0 {
             return render_x;
@@ -616,13 +616,19 @@ impl Editor {
             self.position.render_x,
             self.position.y,
             self.position.x,
-            self.offset.x,
+            self.offset.y,
             self.get_current_row_buf_length(),
             self.get_current_row_render_length(),
             self.document.rows.len()
         );
+        eprintln!("{:?}", self.document.row(self.position.y).unwrap().buf);
+        eprintln!("{:?}", self.document.row(self.position.y).unwrap().render);
 
-        Terminal::cursor_position(&self.position);
+        Terminal::cursor_position(&Position {
+            x: self.position.x - self.offset.x,
+            y: self.position.y - self.offset.y,
+            render_x: 0,
+        });
 
         if self.should_quit {
             Terminal::clear_screen();
@@ -776,8 +782,8 @@ impl Editor {
     fn draw_row(&self, row: &Row) {
         for (j, c) in row.render.iter().enumerate() {
             let mut current_color: Highlight = Highlight::Normal;
-            if j >= self.offset.y as usize
-                && j < (self.terminal.window_size_width + self.offset.y as u16) as usize
+            if j >= self.offset.x as usize
+                && j < (self.terminal.window_size_width + self.offset.x as u16) as usize
             {
                 let peek_color = row.highlight[j];
                 if current_color != peek_color {
@@ -795,7 +801,7 @@ impl Editor {
     fn editor_draw_rows(&mut self) {
         self.editor_update_row();
         for i in 0..self.terminal.window_size_height {
-            let file_row = i as usize + self.offset.x;
+            let file_row = i as usize + self.offset.y;
             if file_row >= self.document.len() {
                 if self.document.is_empty() && i == (self.terminal.window_size_height / 3) {
                     let welcome_line = self.get_welcome_line();
@@ -817,24 +823,24 @@ impl Editor {
     }
 
     fn editor_scroll(&mut self) {
-        if self.position.y < self.document.len() as usize {
-            self.position.render_x = self.editor_row_cx2rx();
+        let Position { x, y, render_x } = self.position;
+        let width = self.terminal.window_size_width as usize;
+        let height = self.terminal.window_size_height as usize;
+        let mut offset = &mut self.offset;
+
+        //if y < self.document.len() as usize {
+        //self.position.render_x = self.editor_row_cx2rx();
+        //} else if y < offset.y {
+        if y < offset.y {
+            offset.y = y;
+        } else if y >= (height + offset.y) {
+            offset.y = y - height + 1;
         }
 
-        if self.position.y < self.offset.x {
-            self.offset.x = self.position.y;
-        }
-
-        if self.position.y >= (self.offset.x + self.terminal.window_size_height as usize) {
-            self.offset.x = self.position.y - self.terminal.window_size_height as usize + 1;
-        }
-
-        if self.position.render_x < self.offset.y {
-            self.offset.y = self.position.render_x;
-        }
-
-        if self.position.render_x >= self.offset.y + self.terminal.window_size_width as usize {
-            self.offset.y = self.position.render_x - self.terminal.window_size_width as usize + 1;
+        if x < offset.x {
+            offset.x = x
+        } else if x >= offset.x + width {
+            offset.x = x - width + 1;
         }
     }
 
@@ -1112,5 +1118,100 @@ impl Editor {
                 die(error)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn open_test_file() -> Document {
+        let file_name = "./tests/test.txt";
+        let document = Document::open(file_name);
+        match document {
+            Err(e) => panic!(e),
+            Ok(document) => return document,
+        }
+    }
+
+    fn cursor_reset(editor: &mut Editor) {
+        editor.position.x = 0;
+        editor.position.y = 0;
+    }
+
+    #[test]
+    fn test_move_cursor() {
+        let mut editor = Editor::default();
+        let document = open_test_file();
+        editor.document = document;
+        editor.move_cursor(Key::Right);
+        assert_eq!(editor.position.x, 1);
+        assert_eq!(editor.position.y, 0);
+
+        editor.move_cursor(Key::Left);
+        assert_eq!(editor.position.x, 0);
+        assert_eq!(editor.position.y, 0);
+
+        editor.move_cursor(Key::Down);
+        assert_eq!(editor.position.x, 0);
+        assert_eq!(editor.position.y, 1);
+
+        editor.move_cursor(Key::Up);
+        assert_eq!(editor.position.x, 0);
+        assert_eq!(editor.position.y, 0);
+
+        assert!(test_cursor_move_edge_case(&mut editor));
+        cursor_reset(&mut editor);
+        assert!(test_move_up_on_the_end_of_row(&mut editor));
+    }
+
+    #[test]
+    fn test_move_cursor_within_terminal_size() {
+        let mut editor = Editor::default();
+        let document = open_test_file();
+        editor.document = document;
+        let mut terminal = Terminal::default();
+        terminal.window_size_height = 5;
+        terminal.window_size_width = 5;
+
+        editor.terminal = terminal;
+
+        assert!(test_window_size_edge_case(&mut editor));
+    }
+
+    fn test_window_size_edge_case(editor: &mut Editor) -> bool {
+        let buf_edge = editor.document.row(0).unwrap().buf_len();
+        for _ in 0..editor.terminal.window_size_width {
+            editor.move_cursor(Key::Right);
+        }
+        editor.move_cursor(Key::Right);
+        assert_eq!(editor.position.x, 0);
+        assert_eq!(editor.position.y, 0);
+        assert_eq!(editor.offset.x, 1);
+
+        true
+    }
+
+    fn test_cursor_move_edge_case(editor: &mut Editor) -> bool {
+        let edge = editor.document.row(0).unwrap().buf_len();
+        for _ in 0..edge {
+            editor.move_cursor(Key::Right);
+        }
+        editor.move_cursor(Key::Right);
+        assert_eq!(editor.position.x, 0);
+        assert_eq!(editor.position.y, 1);
+
+        editor.move_cursor(Key::Left);
+        assert_eq!(editor.position.x, edge);
+        assert_eq!(editor.position.y, 0);
+
+        true
+    }
+
+    fn test_move_up_on_the_end_of_row(editor: &mut Editor) -> bool {
+        editor.move_cursor(Key::Up);
+        assert_eq!(editor.position.x, 0);
+        assert_eq!(editor.position.y, 0);
+        true
     }
 }

@@ -1,0 +1,34 @@
+hello world;
+
+1234567890
+1234567890
+
+
+hoge hoge
+
+fuga afeafeawfeafiejaifjeiajfieajfioejafiojeaiofjeioajfi  ifjeija+71&if jaijf+&71jf+71fiejaifjeiajf iejfieajfeafafa 
+
+/*
+ijifeiajijfae a//
+
+
+afeafea
+fea
+*/
+
+int 32;
+
+aaa
+äää
+y̆y̆y̆
+❤❤❤
+
+あいうえお
+
+string test "hogooooooooooge"
+single quote test 'hoge' // feafeafeaffea
+// feafeafeiafea
+aefa
+
+
+end;
